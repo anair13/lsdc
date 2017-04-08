@@ -34,13 +34,13 @@ SENSOR_DIMS = {
 
 BASE_DIR = '/'.join(str.split(gps_filepath, '/')[:-2])
 EXP_DIR = BASE_DIR + '/../experiments/lsdc_exp/'
-
+HERE_DIR = os.path.dirname(os.path.realpath(__file__))
 
 common = {
     'experiment_name': 'my_experiment' + '_' + \
             datetime.strftime(datetime.now(), '%m-%d-%y_%H-%M'),
     'experiment_dir': EXP_DIR,
-    'data_files_dir': '/home/frederik/Documents/lsdc/pushing_data/finer_temporal_resolution_substep10/train/',
+    'data_files_dir': HERE_DIR + '/train',
     'target_filename': EXP_DIR + 'target.npz',
     'log_filename': EXP_DIR + 'log.txt',
     'conditions': 1,
