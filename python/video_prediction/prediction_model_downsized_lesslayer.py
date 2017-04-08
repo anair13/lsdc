@@ -28,6 +28,7 @@ import pdb
 RELU_SHIFT = 1e-12
 
 
+DNA_KERN_SIZE = 3
 
 
 def construct_model(images,

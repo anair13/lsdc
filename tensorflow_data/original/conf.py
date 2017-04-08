@@ -2,7 +2,7 @@ import os
 current_dir = os.path.dirname(os.path.realpath(__file__))
 
 # tf record data location:
-DATA_DIR = '/home/frederik/Documents/pushing_data/finer_temporal_resolution_substep10/train'
+DATA_DIR = '/home/ashvin/lsdc/pushing_data/finer_temporal_resolution_substep10/train'
 
 # local output directory
 OUT_DIR = current_dir + '/modeldata'
@@ -24,9 +24,10 @@ configuration = {
 'num_masks': 10,            # 'number of masks, usually 1 for DNA, 10 for CDNA, STN.' ,
 'schedsamp_k': 900.0,       # 'The k hyperparameter for scheduled sampling -1 for no scheduled sampling.' ,
 'train_val_split': 0.95,    #'The percentage of files to use for the training set vs. the validation set.' ,
-'batch_size': 32,           #'batch size for training' ,
+'batch_size': 2,           #'batch size for training' ,
 'learning_rate': 0.001,     #'the base learning rate of the generator' ,
 'visualize': '',            #'load model from which to generate visualizations
 'downsize': construct_model,           #'create downsized model'
 'file_visual': '',          # datafile used for making visualizations
 }
+																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																																												
