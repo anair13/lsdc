@@ -268,7 +268,7 @@ if __name__ == '__main__':
     conf = {}
 
     # DATA_DIR = '/home/frederik/Documents/pushing_data/settled_scene_rnd3/train'
-    DATA_DIR = '/home/ashvin/lsdc/python/ashvin/train'
+    DATA_DIR = '/home/ashvin/lsdc/pushing_data/random_action/train'
 
     conf['schedsamp_k'] = -1  # don't feed ground truth
     conf['data_dir'] = DATA_DIR  # 'directory containing data_files.' ,

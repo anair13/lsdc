@@ -33,12 +33,13 @@ SENSOR_DIMS = {
 }
 
 BASE_DIR = '/'.join(str.split(__file__, '/')[:-1])
+HERE_DIR = os.path.dirname(os.path.realpath(__file__))
 
 common = {
     'experiment_name': 'my_experiment' + '_' + \
             datetime.strftime(datetime.now(), '%m-%d-%y_%H-%M'),
     'experiment_dir': BASE_DIR,
-    'data_files_dir': BASE_DIR + '/train',
+    'data_files_dir': HERE_DIR + '/train',
     'target_filename': BASE_DIR + 'target.npz',
     'log_filename': BASE_DIR + 'log.txt',
     'conditions': 1,

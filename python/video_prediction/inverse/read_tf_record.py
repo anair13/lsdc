@@ -9,14 +9,7 @@ import pdb
 from PIL import Image
 import imp
 
-# Original image dimensions
-ORIGINAL_WIDTH = 64
-ORIGINAL_HEIGHT = 64
-COLOR_CHAN = 3
 
-# Default image dimensions.
-IMG_WIDTH = 64
-IMG_HEIGHT = 64
 
 # Dimension of the state and action.
 STATE_DIM = 4
@@ -37,6 +30,7 @@ def build_tfrecord_input(conf, training=True):
     Raises:
       RuntimeError: if no files found.
     """
+
     filenames = gfile.Glob(os.path.join(conf['data_dir'], '*'))
     if not filenames:
         raise RuntimeError('No data_files files found.')
@@ -69,20 +63,30 @@ def build_tfrecord_input(conf, training=True):
         action_name = 'move/' + str(i) + '/action'
         state_name = 'move/' + str(i) + '/state'
         object_pos_name = 'move/' + str(i) + '/object_pos'
-        # print 'reading index', i
-        if conf['use_state']:
-            features = {
-                        image_name: tf.FixedLenFeature([1], tf.string),
-                        action_name: tf.FixedLenFeature([ACION_DIM], tf.float32),
-                        state_name: tf.FixedLenFeature([STATE_DIM], tf.float32)
-            }
-            if 'use_object_pos' in conf.keys():
-                if conf['use_object_pos']:
-                    features[object_pos_name] = tf.FixedLenFeature([OBJECT_POS_DIM], tf.float32)
 
-        else:
-            features = {image_name: tf.FixedLenFeature([1], tf.string)}
+        features = {
+                    image_name: tf.FixedLenFeature([1], tf.string),
+                    action_name: tf.FixedLenFeature([ACION_DIM], tf.float32),
+                    state_name: tf.FixedLenFeature([STATE_DIM], tf.float32)
+        }
+        if 'use_object_pos' in conf.keys():
+            if conf['use_object_pos']:
+                features[object_pos_name] = tf.FixedLenFeature([OBJECT_POS_DIM], tf.float32)
+
         features = tf.parse_single_example(serialized_example, features=features)
+
+        COLOR_CHAN = 3
+        if '128x128' in conf:
+            ORIGINAL_WIDTH = 128
+            ORIGINAL_HEIGHT = 128
+            IMG_WIDTH = 128
+            IMG_HEIGHT = 128
+        else:
+            ORIGINAL_WIDTH = 64
+            ORIGINAL_HEIGHT = 64
+            IMG_WIDTH = 64
+            IMG_HEIGHT = 64
+
 
         image = tf.decode_raw(features[image_name], tf.uint8)
         image = tf.reshape(image, shape=[1,ORIGINAL_HEIGHT*ORIGINAL_WIDTH*COLOR_CHAN])
@@ -98,11 +102,11 @@ def build_tfrecord_input(conf, training=True):
         image = tf.cast(image, tf.float32) / 255.0
         image_seq.append(image)
 
-        if conf['use_state']:
-            state = tf.reshape(features[state_name], shape=[1, STATE_DIM])
-            state_seq.append(state)
-            action = tf.reshape(features[action_name], shape=[1, ACION_DIM])
-            action_seq.append(action)
+
+        state = tf.reshape(features[state_name], shape=[1, STATE_DIM])
+        state_seq.append(state)
+        action = tf.reshape(features[action_name], shape=[1, ACION_DIM])
+        action_seq.append(action)
 
         if 'use_object_pos' in conf.keys():
             if conf['use_object_pos']:
@@ -114,36 +118,25 @@ def build_tfrecord_input(conf, training=True):
     if conf['visualize']: num_threads = 1
     else: num_threads = np.min((conf['batch_size'], 32))
 
-    if conf['use_state']:
-        state_seq = tf.concat(0, state_seq)
-        action_seq = tf.concat(0, action_seq)
+    state_seq = tf.concat(0, state_seq)
+    action_seq = tf.concat(0, action_seq)
 
-        if 'use_object_pos' in conf.keys():
-            if conf['use_object_pos']:
-                [image_batch, action_batch, state_batch, object_pos_batch] = tf.train.batch(
-                [image_seq, action_seq, state_seq, object_pos_seq],
-                conf['batch_size'],
-                num_threads=num_threads,
-                capacity=100 * conf['batch_size'])
-
-                return image_batch, action_batch, state_batch, object_pos_batch
-        else:
-            [image_batch, action_batch, state_batch] = tf.train.batch(
-                [image_seq, action_seq, state_seq],
-                conf['batch_size'],
-                num_threads=num_threads,
-                capacity=100 * conf['batch_size'])
-            return image_batch, action_batch, state_batch
-    else:
-        image_batch = tf.train.batch(
-            [image_seq],
+    if 'use_object_pos' in conf.keys():
+        if conf['use_object_pos']:
+            [image_batch, action_batch, state_batch, object_pos_batch] = tf.train.batch(
+            [image_seq, action_seq, state_seq, object_pos_seq],
             conf['batch_size'],
             num_threads=num_threads,
             capacity=100 * conf['batch_size'])
-        zeros_batch_action = tf.zeros([conf['batch_size'], conf['sequence_length'], ACION_DIM])
-        zeros_batch_state = tf.zeros([conf['batch_size'], conf['sequence_length'], STATE_DIM])
-        return image_batch, zeros_batch_action, zeros_batch_state
 
+            return image_batch, action_batch, state_batch, object_pos_batch
+    else:
+        [image_batch, action_batch, state_batch] = tf.train.batch(
+            [image_seq, action_seq, state_seq],
+            conf['batch_size'],
+            num_threads=num_threads,
+            capacity=100 * conf['batch_size'])
+        return image_batch, action_batch, state_batch
 
 
 ##### code below is used for debugging
@@ -260,20 +253,42 @@ if __name__ == '__main__':
     # for debugging only:
     # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     # print 'using CUDA_VISIBLE_DEVICES=', os.environ["CUDA_VISIBLE_DEVICES"]
-    conf = {}
 
     # DATA_DIR = '/home/frederik/Documents/pushing_data/settled_scene_rnd3/train'
-    DATA_DIR = '/home/ashvin/lsdc/python/ashvin/train'
+    DATA_DIR = '/home/ashvin/lsdc/pushing_data/random_action/train'
 
-    conf['schedsamp_k'] = -1  # don't feed ground truth
-    conf['data_dir'] = DATA_DIR  # 'directory containing data_files.' ,
-    conf['skip_frame'] = 1
-    conf['train_val_split']= 0.95
-    conf['sequence_length']= 15      # 'sequence length, including context frames.'
-    conf['use_state'] = True
-    conf['batch_size']= 32
-    conf['visualize']=False
-    conf['use_object_pos'] = True
+    # tf record data location:
+    DATA_DIR = '/home/ashvin/lsdc/pushing_data/finer_temporal_resolution_substep10/train'
+
+
+    conf = {
+    'experiment_name': 'originial_with_newdata',
+    'data_dir': DATA_DIR,       # 'directory containing data.' ,
+    'num_iterations': 50000,   #'number of training iterations.' ,
+    'pretrained_model': '',     # 'filepath of a pretrained model to resume training from.' ,
+    'sequence_length': 15,      # 'sequence length, including context frames.' ,
+    'skip_frame': 2,            # 'use ever i-th frame to increase prediction horizon' ,
+    'context_frames': 2,        # of frames before predictions.' ,
+    'use_state': 1,             #'Whether or not to give the state+action to the model' ,
+    'model': 'CDNA',            #'model architecture to use - CDNA, DNA, or STP' ,
+    'num_masks': 10,            # 'number of masks, usually 1 for DNA, 10 for CDNA, STN.' ,
+    'schedsamp_k': 900.0,       # 'The k hyperparameter for scheduled sampling -1 for no scheduled sampling.' ,
+    'train_val_split': 0.95,    #'The percentage of files to use for the training set vs. the validation set.' ,
+    'batch_size': 2,           #'batch size for training' ,
+    'learning_rate': 0.001,     #'the base learning rate of the generator' ,
+    'visualize': '',            #'load model from which to generate visualizations
+    'file_visual': '',          # datafile used for making visualizations
+    }
+
+    # conf['schedsamp_k'] = -1  # don't feed ground truth
+    # conf['data_dir'] = DATA_DIR  # 'directory containing data_files.' ,
+    # conf['skip_frame'] = 1
+    # conf['train_val_split']= 0.95
+    # conf['sequence_length']= 15      # 'sequence length, including context frames.'
+    # conf['use_state'] = True
+    # conf['batch_size']= 32
+    # conf['visualize']=False
+    # conf['use_object_pos'] = True
 
     print '-------------------------------------------------------------------'
     print 'verify current settings!! '
@@ -282,10 +297,10 @@ if __name__ == '__main__':
     print '-------------------------------------------------------------------'
 
     print 'testing the reader'
-    if conf['use_object_pos']:
-        image_batch, action_batch, state_batch, object_pos_batch  = build_tfrecord_input(conf, training=True)
-    else:
-        image_batch, action_batch, state_batch = build_tfrecord_input(conf, training=True)
+    # if conf['use_object_pos']:
+    #     image_batch, action_batch, state_batch, object_pos_batch  = build_tfrecord_input(conf, training=True)
+    # else:
+    image_batch, action_batch, state_batch = build_tfrecord_input(conf, training=True)
     sess = tf.InteractiveSession()
     tf.train.start_queue_runners(sess)
     sess.run(tf.initialize_all_variables())
@@ -293,10 +308,10 @@ if __name__ == '__main__':
 
     for i in range(1):
         print 'run number ', i
-        if conf['use_object_pos']:
-            image_data, action_data, state_data, object_pos = sess.run([image_batch, action_batch, state_batch, object_pos_batch])
-        else:
-            image_data, action_data, state_data = sess.run([image_batch, action_batch, state_batch])
+        # if conf['use_object_pos']:
+        #     image_data, action_data, state_data, object_pos = sess.run([image_batch, action_batch, state_batch, object_pos_batch])
+        # else:
+        image_data, action_data, state_data = sess.run([image_batch, action_batch, state_batch])
 
         print 'action:', action_data.shape
         print 'action: batch ind 0', action_data[0]
@@ -321,25 +336,25 @@ if __name__ == '__main__':
         print pos_var
 
 
-        # from utils_vpred.create_gif import comp_single_video
+        from video_prediction.utils_vpred.create_gif import comp_single_video
 
         # make video preview video
         # gif_preview = '/'.join(str.split(__file__, '/')[:-1] + ['preview'])
         # comp_single_video(gif_preview, image_data)
-\
+
         # make video preview video with annotated forces
         # gif_preview = '/'.join(str.split(__file__, '/')[:-1] + ['preview_visuals'])
         # comp_single_video(gif_preview, add_visuals_to_batch(image_data, action_data, state_data, action_pos=True))
 
         # show some frames
-        # for i in range(2):
-        #     print 'object pos', object_pos.shape
-        #     pdb.set_trace()
+        for i in range(2):
+            # print 'object pos', object_pos.shape
+            pdb.set_trace()
 
-        #     img = np.uint8(255. *image_data[0, i])
-        #     img = Image.fromarray(img, 'RGB')
-        #     # img.show()
+            img = np.uint8(255. *image_data[0, i])
+            img = Image.fromarray(img, 'RGB')
+            # img.show()
 
-        #     get_frame_with_posdata(img, object_pos[0, i])
+            # get_frame_with_posdata(img, object_pos[0, i])
 
 

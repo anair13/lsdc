@@ -110,7 +110,7 @@ class DynamicsModel(object):
         # self.inputs = list(read_tf_record.build_tfrecord_input(self.conf, training=True))
 
         self.inputs = list(read_tf_record.build_tfrecord_input(self.conf, training=True))
-        image_batch, action_batch, state_batch, object_pos_batch = self.inputs
+        image_batch, action_batch, state_batch = self.inputs
 
         img_features = []
         for i in range(self.conf['sequence_length']):
