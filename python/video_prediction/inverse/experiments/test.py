@@ -22,12 +22,12 @@ def get_conf():
     'num_masks': 10,            # 'number of masks, usually 1 for DNA, 10 for CDNA, STN.' ,
     'schedsamp_k': 900.0,       # 'The k hyperparameter for scheduled sampling -1 for no scheduled sampling.' ,
     'train_val_split': 0.95,    #'The percentage of files to use for the training set vs. the validation set.' ,
-    'batch_size': 2,           #'batch size for training' ,
+    'batch_size': 32,           #'batch size for training' ,
     'learning_rate': 0.001,     #'the base learning rate of the generator' ,
     'visualize': '',            #'load model from which to generate visualizations
     'file_visual': '',          # datafile used for making visualizations
     }
-    
+
     # conf = collections.OrderedDict()
     # conf['schedsamp_k'] = -1  # don't feed ground truth
     # conf['data_dir'] = DATA_DIR  # 'directory containing data_files.' ,
@@ -38,7 +38,6 @@ def get_conf():
     # conf['batch_size']= 32
     # conf['visualize']=False
     # conf['use_object_pos'] = True
-    conf['initLr'] = 0.0001
 
     print '-------------------------------------------------------------------'
     print 'verify current settings!! '
@@ -48,8 +47,9 @@ def get_conf():
 
     return conf
 
-model = dynamics_model.DynamicsModel(get_conf())
+if __name__ == "__main__":
+    model = dynamics_model.DynamicsModel(get_conf())
 
-model.train(100000, True)
-# model.init_sess()
-# print model.train_batch(model.inputs, None, None)
+    model.train(100000, True)
+    # model.init_sess()
+    # print model.train_batch(model.inputs, None, None)

@@ -131,7 +131,7 @@ class DynamicsModel(object):
         self.network.add_to_losses(self.loss)
 
         # make a training network
-        self.train_network = tf_utils.TFTrain(self.inputs, self.network, batchSz=self.conf['batch_size'], initLr=self.conf['initLr'])
+        self.train_network = tf_utils.TFTrain(self.inputs, self.network, batchSz=self.conf['batch_size'], initLr=self.conf['learning_rate'])
         self.train_network.add_loss_summaries([self.loss], ['loss'])
 
         print "done with network setup"
@@ -153,4 +153,42 @@ class DynamicsModel(object):
         self.train_network.maxIter_ = max_iters
         self.train_network.dispIter_ = 100
         self.train_network.train(self.train_batch, self.train_batch, use_existing=use_existing, sess=self.sess)
+
+    def run(self, dataset, batches=1, i = None, sess=None):
+        """Return batches*batch_size examples from the dataset ("train" or "val")
+        i: specific model to restore, or restores the latest
+        """
+        f = self.get_f(i, sess)
+        if not f:
+            return None
+
+        ret = []
+
+        for j in range(batches):
+            tb = self.train_batch(self.inputs, self.batch_size, dataset=="train")
+            inps, out = f(tb)
+            ret.append([inps, out])
+
+        return ret
+
+    def get_f(self, i = None, sess=None):
+        """Return the network forward function"""
+        ret = []
+        if not sess:
+            sess = tf.Session()
+            sess.run(tf.initialize_all_variables())
+            restore = self.network.restore_model(sess, i)
+            if i and not restore: # model requested but not found
+                return None
+
+        names = self.features_names + self.predictions_names + self.accuracies_names
+        def f(training_batch):
+            feed_dict = training_batch
+            result = sess.run(self.features + self.predictions + self.accuracies, feed_dict)
+            inps = [feed_dict[x] for x in self.inputs]
+            out = {}
+            for i, name in enumerate(names):
+                out[name] = result[i]
+            return inps, out
+
 
