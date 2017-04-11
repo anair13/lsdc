@@ -81,7 +81,7 @@ def dict_to_string(params):
             name = name + str(key) + "_" + str(params[key]) + "/"
     return name[:-1]
 
-def pred_network(f1, f2, reuse=False, N=20):
+def pred_network(f1, reuse=False, N=20):
     # with slim.arg_scope([slim.fully_connected],
     #     weights_initializer=tf.contrib.layers.xavier_initializer,
     #     weights_regularizer=slim.l2_regularizer(0.0005),
@@ -95,8 +95,8 @@ def pred_network(f1, f2, reuse=False, N=20):
     # return net
 
     with tf.variable_scope("fc", reuse=reuse) as sc:
-        x = tf.concat(1, [f1, f2])
-        a = make_network(x, [64, 32, 2*N])
+        x = f1
+        a = make_network(x, [32, 32, 2*N])
         return tf.reshape(a, [-1, 2, N])
 
 def discretize_actions(x, N=20):
@@ -123,30 +123,32 @@ class DynamicsModel(object):
         self.conf = train_conf
         self.sess = None
 
-        # image_batch  = tf.placeholder("float", [None, 15, 64, 64, 3])
-        # action_batch = tf.placeholder("float", [None, 15, 2])
-        # self.inputs = list(read_tf_record.build_tfrecord_input(self.conf, training=True))
+        image_batch  = tf.placeholder("float", [None, 15, 64, 64, 3])
+        raw_action_batch = tf.placeholder("float", [None, 15, 2])
+        self.inputs = [image_batch, raw_action_batch]
 
-        self.inputs = list(read_tf_record.build_tfrecord_input(self.conf, training=True))
-        image_batch, raw_action_batch, state_batch = self.inputs
+        train_conf = self.conf.copy()
+        train_conf["data_dir"] += '/train'
+        self.train_input_readers = list(read_tf_record.build_tfrecord_input(train_conf, training=True))
+        test_conf = self.conf.copy()
+        test_conf["data_dir"] += '/test'
+        self.test_input_readers = list(read_tf_record.build_tfrecord_input(test_conf, training=True))
+
+        # self.inputs = list(read_tf_record.build_tfrecord_input(self.conf, training=True))
+        # image_batch, raw_action_batch, state_batch = self.inputs
 
         D = lambda x: discretize_actions(x, self.conf['discretize'])
         action_batch = tf.py_func(D, [raw_action_batch], tf.float32)
 
         self.img_features = []
-        for i in range(self.conf['sequence_length']):
-            f = conv_network(image_batch[:, i, :, :, :], i != 0)
-            self.img_features.append(f)
-            if i == 0:
-                print "image features: (batch, featsize)", f.get_shape()
-
         self.action_preds = []
         action_loss = []
         for i in range(self.conf['sequence_length'] - 1):
-            a = pred_network(self.img_features[i], self.img_features[i+1], i != 0, self.conf['discretize'])
-            # l = tf.nn.l2_loss(a - action_batch[:, i, :])
+            f = conv_network(image_batch[:, i, :, :, :] - image_batch[:, i+1, :, :, :], i != 0)
+            a = pred_network(f, i != 0, self.conf['discretize'])
             l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, action_batch[:, i, :, :]))
             self.action_preds.append(a)
+            self.img_features.append(f)
             action_loss.append(l)
 
         self.loss = tf.add_n(action_loss)
@@ -164,11 +166,13 @@ class DynamicsModel(object):
         self.sess.run(tf.initialize_all_variables())
 
     def train_batch(self, inputs, batch_size, isTrain):
-        # image_batch, action_batch, state_batch, object_pos_batch = inputs
-        # image_data, action_data, state_data, object_pos = self.sess.run([image_batch, action_batch, state_batch, object_pos_batch])
-        # feed_dict = {image_batch: image_data, action_batch: action_data}
-        # return feed_dict
-        return {}
+        readers = self.train_input_readers if isTrain else self.test_input_readers
+        image_batch, raw_action_batch, state_batch = readers
+        image_data, action_data, state_data = self.sess.run([image_batch, raw_action_batch, state_batch])
+
+        image_batch, action_batch = inputs
+        feed_dict = {image_batch: image_data, action_batch: action_data}
+        return feed_dict
 
     def train(self, max_iters = 100000, use_existing = True):
         self.init_sess()
@@ -215,5 +219,3 @@ class DynamicsModel(object):
             return out
 
         return f
-
-

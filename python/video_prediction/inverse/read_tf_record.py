@@ -134,8 +134,10 @@ def build_tfrecord_input(conf, training=True):
         [image_batch, action_batch, state_batch] = tf.train.batch(
             [image_seq, action_seq, state_seq],
             conf['batch_size'],
-            num_threads=num_threads,
-            capacity=100 * conf['batch_size'])
+            # num_threads=num_threads,
+            # capacity=100 * conf['batch_size'])
+            num_threads=1,
+            capacity=1 * conf['batch_size'])
         return image_batch, action_batch, state_batch
 
 
