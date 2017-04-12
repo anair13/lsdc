@@ -31,18 +31,12 @@ import discretize
 
 def conv_network(img, reuse=False):
     with slim.arg_scope([slim.conv2d], padding='SAME',
-                      weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
+                      # weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
                       weights_regularizer=slim.l2_regularizer(0.0005), reuse=reuse):
-        net = slim.conv2d(img, 32, [3, 3], scope='conv1', )
-        net = slim.max_pool2d(net, [2, 2], scope='pool1')
-        net = slim.conv2d(net, 32, [3, 3], scope='conv2')
-        net = slim.max_pool2d(net, [2, 2], scope='pool2')
-        net = slim.conv2d(net, 32, [3, 3], scope='conv3')
-        net = slim.max_pool2d(net, [2, 2], scope='pool3')
-        net = slim.conv2d(net, 32, [3, 3], scope='conv4')
-        net = slim.max_pool2d(net, [2, 2], scope='pool4')
-        net = slim.conv2d(net, 32, [4, 4], padding='VALID', scope='conv5')
-        net = tf.reshape(net, [-1, 32])
+        net = slim.conv2d(img, 32, [6, 6], 2, padding='VALID', scope='conv1')
+        net = slim.conv2d(net, 32, [6, 6], 2, padding='VALID', scope='conv2')
+        net = slim.conv2d(net, 32, [6, 6], 2, padding='VALID', scope='conv3', activation_fn=None)
+        net = tf.reshape(net, [-1, 512])
     return net
 
 def init_weights(name, shape):
@@ -96,7 +90,7 @@ def pred_network(f1, f2, reuse=False, N=20):
 
     with tf.variable_scope("fc", reuse=reuse) as sc:
         x = tf.concat(1, [f1, f2])
-        a = make_network(x, [64, 32, 2*N])
+        a = make_network(x, [1024, 100, 2*N])
         return tf.reshape(a, [-1, 2, N])
 
 def discretize_actions(x, N=20):
@@ -141,20 +135,25 @@ class DynamicsModel(object):
                 print "image features: (batch, featsize)", f.get_shape()
 
         self.action_preds = []
+        self.correct_predictions = []
         action_loss = []
         for i in range(self.conf['sequence_length'] - 1):
             a = pred_network(self.img_features[i], self.img_features[i+1], i != 0, self.conf['discretize'])
-            # l = tf.nn.l2_loss(a - action_batch[:, i, :])
-            l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, action_batch[:, i, :, :]))
+            A = action_batch[:, i, :, :]
+            l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, A))
+            c = tf.equal(tf.argmax(a, 2), tf.argmax(A, 2))
+            self.correct_predictions.append(tf.cast(c, tf.float32))
             self.action_preds.append(a)
             action_loss.append(l)
+
+        self.accuracy = tf.reduce_mean(tf.concat(1, self.correct_predictions))
 
         self.loss = tf.add_n(action_loss)
         self.network.add_to_losses(self.loss)
 
         # make a training network
         self.train_network = tf_utils.TFTrain(self.inputs, self.network, batchSz=self.conf['batch_size'], initLr=self.conf['learning_rate'])
-        self.train_network.add_loss_summaries([self.loss], ['loss'])
+        self.train_network.add_loss_summaries([self.loss, self.accuracy], ['loss', 'accuracy'])
 
         print "done with network setup"
 
