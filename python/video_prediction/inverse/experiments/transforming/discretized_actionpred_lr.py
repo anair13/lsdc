@@ -6,7 +6,7 @@ import transforming_dynamics_model
 import collections
 
 def get_conf():
-    DATA_DIR = '/home/ashvin/lsdc/pushing_data/finer_temporal_resolution_substep10/train'
+    DATA_DIR = '/home/ashvin/lsdc/pushing_data/finer_temporal_resolution_substep10'
     conf = collections.OrderedDict()
     conf['experiment_name'] = 'discretized_actionpred'
     conf['transform'] = 'none'
@@ -28,6 +28,7 @@ def get_conf():
     conf['file_visual'] = ''          # datafile used for making visualizations
     conf['discretize'] = 20
     conf['masks'] = 0
+    conf['run'] = 2
     return conf
 
 if __name__ == "__main__":
