@@ -23,7 +23,7 @@ def get_conf():
     conf['schedsamp_k'] = 900.0       # 'The k hyperparameter for scheduled sampling -1 for no scheduled sampling.'
     conf['train_val_split'] = 0.95    #'The percentage of files to use for the training set vs. the validation set.'
     conf['batch_size'] = 32           #'batch size for training'
-    conf['learning_rate'] = 0.001      #'the base learning rate of the generator'
+    conf['learning_rate'] = 0.01      #'the base learning rate of the generator'
     conf['visualize'] = ''            #'load model from which to generate visualizations
     conf['file_visual'] = ''          # datafile used for making visualizations
     conf['discretize'] = 20
