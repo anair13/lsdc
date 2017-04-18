@@ -28,7 +28,7 @@ def get_train_conf():
     conf['masks'] = 0
     conf['run'] = 0
     conf['mu1'] = 0 # transforming mask regularizing weight
-    conf['mu2'] = 0.00001 # forward weight
+    conf['mu2'] = 0.000001 # forward weight
     conf['seq'] = 0 # to alternate training phase
     return conf
 

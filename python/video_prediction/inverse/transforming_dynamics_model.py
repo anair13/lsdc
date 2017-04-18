@@ -75,7 +75,7 @@ def conv_network(img, reuse=False, fsize=100):
             net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
             net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv4')
             net = tf.reshape(net, [-1, 512])
-            net = slim.fully_connected(net, fsize, scope='fc5', activation_fn=None)
+            net = slim.fully_connected(net, fsize, scope='fc5', activation_fn=tf.sigmoid)
     return net
 
 def transforming_conv_network(img, reuse=False):
@@ -219,7 +219,7 @@ class DynamicsModel(object):
         mu2 = tf.constant(float(self.conf['mu2'])) if self.conf['mu2'] is not None else tf.constant(0.0)
         self.forward_loss = tf.add_n(self.forward_losses)
         self.inverse_loss = tf.add_n(self.action_loss)
-        self.dynamics_loss = self.inverse_loss + mu2 * self.inverse_loss
+        self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss
         self.transformer_loss = -self.inverse_loss + mu1 * tf.reduce_mean(self.t_masks)
 
         # make a training network
@@ -232,7 +232,8 @@ class DynamicsModel(object):
 
         self.network.add_to_losses(loss)
         self.train_network = tf_utils.TFTrain(self.inputs, self.network, batchSz=self.conf['batch_size'], initLr=self.conf['learning_rate'], var_list=var_list)
-        self.train_network.add_loss_summaries([self.dynamics_loss, self.transformer_loss, self.accuracy], ['dynamics_loss', 'transformer_loss', 'accuracy'])
+        # self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.transformer_loss, self.accuracy], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'transformer_loss', 'accuracy'])
+        self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.accuracy], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'accuracy'])
 
         print "done with network setup"
 
