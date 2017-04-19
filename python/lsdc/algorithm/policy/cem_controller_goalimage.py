@@ -253,6 +253,7 @@ class CEM_controller(Policy):
         inf_low_state, gen_images, gen_states = self.predictor( input_images= last_frames,
                                                                 input_state=last_states,
                                                                 input_actions = actions)
+
         for tstep in range(len(gen_states)):
             for smp in range(self.M):
                 self.pred_pos[smp, itr, tstep+1] = self.mujoco_to_imagespace(
@@ -400,7 +401,6 @@ class CEM_controller(Policy):
 
         self.init_model = init_model
 
-
         if t == 0:
             action = np.zeros(2)
             self.target = copy.deepcopy(self.init_model.data.qpos[:2].squeeze())
@@ -497,7 +497,7 @@ class CEM_controller(Policy):
         if 'no_pix_distrib' not in self.netconf:
             if 'ballinvar' not in self.policyparams:
                 # taking any of the identical example in the batch
-                goal_state = inf_low_state[-1][0]
+                goal_state = inf_low_state[0][0]
             else:
                 if 'nonrec' in self.netconf:
                     goal_state = inf_low_state[2]

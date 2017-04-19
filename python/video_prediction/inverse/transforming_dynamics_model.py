@@ -125,6 +125,27 @@ def forward_pred_network(f1, u, reuse=False, N=20, fsize=100):
             net = slim.fully_connected(net, fsize, scope='fc_3', activation_fn=tf.sigmoid)
             return net
 
+def rollout_network(f1, actions, reuse=True, N=20, fsize=100, seqlen=15):
+    u = tf.reshape(actions, [-1, seqlen, 2*N])
+    f = f1
+    outputs = []
+    for i in range(seqlen-1):
+        with tf.variable_scope('forwardpred', reuse=reuse) as sc:
+            with slim.arg_scope([slim.fully_connected],
+                weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
+                weights_regularizer=slim.l2_regularizer(0.0005),
+                activation_fn=tf.nn.elu, reuse=reuse):
+                # print f1.get_shape()
+                # print u.get_shape()
+                # print reuse
+                # U = slim.fully_connected(u, 100)
+                net = tf.concat(1, [f, u[:, i, :]])
+                net = slim.fully_connected(net, 100, scope='fc_1')
+                net = slim.fully_connected(net, 100, scope='fc_2')
+                f = slim.fully_connected(net, fsize, scope='fc_3', activation_fn=tf.sigmoid)
+                outputs.append(f)
+    return outputs
+
 def discretize_actions(x, N=20):
     batches = x.shape[0]
     frames = x.shape[1]
@@ -168,9 +189,11 @@ class DynamicsModel(object):
 
         D = lambda x: discretize_actions(x, self.conf['discretize'])
         action_batch = tf.py_func(D, [raw_action_batch], tf.float32)
+        self.action_batch = action_batch
 
         self.fsize = self.conf['fsize']
         self.dsize = self.conf['discretize']
+        self.batch_size = self.conf['batch_size']
 
         self.t_masks = []
         self.img_features = []
@@ -222,6 +245,8 @@ class DynamicsModel(object):
         self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss
         self.transformer_loss = -self.inverse_loss + mu1 * tf.reduce_mean(self.t_masks)
 
+        self.rollout_outputs = rollout_network(self.img_features[0], self.action_batch)
+
         # make a training network
         if seq % 2 == 1:
             loss = self.transformer_loss
@@ -272,7 +297,7 @@ class DynamicsModel(object):
         for i in range(1000):
             sess.run([apply_grad_op])
 
-    def run(self, dataset, batches=1, i = None, sess=None):
+    def run(self, dataset="test", batches=1, i = None, sess=None):
         """Return batches*batch_size examples from the dataset ("train" or "val")
         i: specific model to restore, or restores the latest
         """
@@ -284,12 +309,12 @@ class DynamicsModel(object):
 
         for j in range(batches):
             tb = self.train_batch(self.inputs, self.batch_size, dataset=="train")
-            inps, out = f(tb)
-            ret.append([inps, out])
+            out = f(tb)
+            ret.append(out)
 
         return ret
 
-    def get_f(self, i = None, sess=None, isTrain=False):
+    def get_f(self, i = None, sess=None):
         """Return the network forward function"""
         ret = []
         if not self.sess:
@@ -300,14 +325,28 @@ class DynamicsModel(object):
                 return None
 
         names = ["pred_f0", "image", "action", "masks"]
-        def f():
-            feed_dict = self.train_batch(self.inputs, self.conf['batch_size'], isTrain)
+        def f(feed_dict):
             result = self.sess.run(self.action_preds[0:1] + self.inputs + self.t_masks[0:1], feed_dict)
             # inps = [feed_dict[x] for x in self.inputs]
             out = {}
             for i, name in enumerate(names):
                 out[name] = result[i]
             return out
+
+        return f
+
+    def get_rollout_f(self, i = None, sess=None):
+        """Return the network forward function"""
+        ret = []
+        if not self.sess:
+            self.init_sess()
+            self.sess.run(tf.initialize_all_variables())
+            restore = self.network.restore_model(self.sess, i)
+            if i and not restore: # model requested but not found
+                return None
+
+        def f(feed_dict):
+            return self.sess.run(self.rollout_outputs, feed_dict)
 
         return f
 
