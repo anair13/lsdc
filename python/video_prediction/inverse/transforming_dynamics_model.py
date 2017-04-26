@@ -78,6 +78,19 @@ def conv_network(img, reuse=False, fsize=100):
             net = slim.fully_connected(net, fsize, scope='fc5', activation_fn=tf.sigmoid)
     return net
 
+def decoder_network(f, reuse=False):
+    with tf.variable_scope('autodecoder', reuse=reuse) as scope:
+        with slim.arg_scope([slim.conv2d], padding='SAME',
+                          # weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
+                          weights_regularizer=slim.l2_regularizer(0.0005), reuse=reuse):
+            net = slim.fully_connected(f, 512, scope='fc5')
+            net = tf.reshape(net, [-1, 4, 4, 32])
+            net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv1')
+            net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
+            net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
+            net = slim.conv2d_transpose(net, 3, [3, 3], 2, padding='SAME', scope='conv4', activation_fn=None)
+    return net
+
 def transforming_conv_network(img, reuse=False):
     with tf.variable_scope('transformer', reuse=reuse) as scope:
         with slim.arg_scope([slim.conv2d], padding='SAME',
@@ -125,10 +138,11 @@ def forward_pred_network(f1, u, reuse=False, N=20, fsize=100):
             net = slim.fully_connected(net, fsize, scope='fc_3', activation_fn=tf.sigmoid)
             return net
 
-def rollout_network(f1, actions, reuse=True, N=20, fsize=100, seqlen=15):
+def rollout_network(f1, actions, reuse=True, N=20, fsize=100, seqlen=15, imgs=False):
     u = tf.reshape(actions, [-1, seqlen, 2*N])
     f = f1
     outputs = []
+    reconstructions = []
     for i in range(seqlen-1):
         with tf.variable_scope('forwardpred', reuse=reuse) as sc:
             with slim.arg_scope([slim.fully_connected],
@@ -144,7 +158,11 @@ def rollout_network(f1, actions, reuse=True, N=20, fsize=100, seqlen=15):
                 net = slim.fully_connected(net, 100, scope='fc_2')
                 f = slim.fully_connected(net, fsize, scope='fc_3', activation_fn=tf.sigmoid)
                 outputs.append(f)
-    return outputs
+    if imgs:
+        for i in range(seqlen-1):
+            f = outputs[i]
+            reconstructions.append(decoder_network(f, True))
+    return outputs, reconstructions
 
 def discretize_actions(x, N=20):
     batches = x.shape[0]
@@ -191,23 +209,42 @@ class DynamicsModel(object):
         action_batch = tf.py_func(D, [raw_action_batch], tf.float32)
         self.action_batch = action_batch
 
-        self.fsize = self.conf['fsize']
-        self.dsize = self.conf['discretize']
+        self.fsize = self.conf.get('fsize', 100)
+        self.dsize = self.conf.get('discretize', 20)
         self.batch_size = self.conf['batch_size']
+        self.sequence_length = self.conf['sequence_length']
+
+        transformed_image_batch = image_batch
+        if self.conf['transform'] == "meansub":
+            transformed_image_batch = transformed_image_batch - self.get_image_mean_tensor()
 
         self.t_masks = []
         self.img_features = []
+        self.img_reconstructions = []
+        self.img_reconstruction_losses = [tf.constant(0.0)]
         for i in range(self.conf['sequence_length']):
-            m = transforming_conv_network(image_batch[:, i, :, :, :], i != 0)
-            t_i = image_batch[:, i, :, :, :]
+            t_i = transformed_image_batch[:, i, :, :, :]
             if self.conf['masks']:
+                m = transforming_conv_network(transformed_image_batch[:, i, :, :, :], i != 0)
                 t_i = m * t_i
+                self.t_masks.append(m)
+                if i == 0:
+                    print "mask size: ", m.get_shape()
+
             f = conv_network(t_i, i != 0, self.fsize)
-            self.t_masks.append(m)
             self.img_features.append(f)
             if i == 0:
-                print "mask size: ", m.get_shape()
                 print "image features: (batch, featsize)", f.get_shape()
+
+            autoencoder = self.conf.get('autoencoder', None)
+            if autoencoder == "decode": # means no gradients passed back
+                f = tf.stop_gradient(f)
+            if autoencoder:
+                I = decoder_network(f, i != 0)
+                l = tf.nn.l2_loss(I - t_i)
+                self.img_reconstructions.append(I)
+                self.img_reconstruction_losses.append(l)
+
 
         self.action_preds = []
         self.action_loss = []
@@ -237,15 +274,17 @@ class DynamicsModel(object):
         self.dynamics_vars = [var for var in t_vars if not 'transformer' in var.name]
         self.transformer_vars = [var for var in t_vars if 'transformer' in var.name]
 
-        seq = self.conf['seq'] if self.conf['seq'] is not None else 0
-        mu1 = tf.constant(float(self.conf['mu1'])) if self.conf['mu1'] is not None else tf.constant(0.0)
-        mu2 = tf.constant(float(self.conf['mu2'])) if self.conf['mu2'] is not None else tf.constant(0.0)
+        seq = self.conf.get('seq', None) if self.conf['seq'] is not None else 0
+        mu1 = tf.constant(float(self.conf['mu1'])) if self.conf.get('mu1', None) is not None else tf.constant(0.0)
+        mu2 = tf.constant(float(self.conf['mu2'])) if self.conf.get('mu2', None) is not None else tf.constant(0.0)
+        mu3 = tf.constant(float(self.conf['mu3'])) if self.conf.get('mu3', None) is not None else tf.constant(0.0)
         self.forward_loss = tf.add_n(self.forward_losses)
         self.inverse_loss = tf.add_n(self.action_loss)
-        self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss
+        self.reconstruction_loss = tf.add_n(self.img_reconstruction_losses)
+        self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss + mu3 * self.reconstruction_loss
         self.transformer_loss = -self.inverse_loss + mu1 * tf.reduce_mean(self.t_masks)
 
-        self.rollout_outputs = rollout_network(self.img_features[0], self.action_batch)
+        self.rollout_outputs, self.rollout_reconstructions = rollout_network(self.img_features[0], self.action_batch, imgs=True)
 
         # make a training network
         if seq % 2 == 1:
@@ -258,7 +297,7 @@ class DynamicsModel(object):
         self.network.add_to_losses(loss)
         self.train_network = tf_utils.TFTrain(self.inputs, self.network, batchSz=self.conf['batch_size'], initLr=self.conf['learning_rate'], var_list=var_list)
         # self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.transformer_loss, self.accuracy], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'transformer_loss', 'accuracy'])
-        self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.accuracy], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'accuracy'])
+        self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.reconstruction_loss, self.accuracy], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'reconstruction_loss', 'accuracy'])
 
         print "done with network setup"
 
@@ -270,8 +309,8 @@ class DynamicsModel(object):
     def train_batch(self, inputs, batch_size, isTrain):
         readers = self.train_input_readers if isTrain else self.test_input_readers
         image_batch, raw_action_batch, state_batch = readers
-        image_data, action_data, state_data = self.sess.run([image_batch, raw_action_batch, state_batch])
 
+        image_data, action_data, state_data = self.sess.run([image_batch, raw_action_batch, state_batch])
         image_batch, action_batch = inputs
         feed_dict = {image_batch: image_data, action_batch: action_data}
         return feed_dict
@@ -297,13 +336,14 @@ class DynamicsModel(object):
         for i in range(1000):
             sess.run([apply_grad_op])
 
-    def run(self, dataset="test", batches=1, i = None, sess=None):
+    def run(self, dataset="test", batches=1, i = None, sess=None, f=None):
         """Return batches*batch_size examples from the dataset ("train" or "val")
         i: specific model to restore, or restores the latest
         """
-        f = self.get_f(i, sess)
         if not f:
-            return None
+            f = self.get_f(i, sess)
+            if not f:
+                return None
 
         ret = []
 
@@ -324,18 +364,17 @@ class DynamicsModel(object):
             if i and not restore: # model requested but not found
                 return None
 
-        names = ["pred_f0", "image", "action", "masks"]
+        query = self.action_preds[0:1] + self.inputs + self.t_masks[0:1] + self.img_reconstructions[0:1]
         def f(feed_dict):
-            result = self.sess.run(self.action_preds[0:1] + self.inputs + self.t_masks[0:1], feed_dict)
-            # inps = [feed_dict[x] for x in self.inputs]
-            out = {}
-            for i, name in enumerate(names):
-                out[name] = result[i]
-            return out
+            result = self.sess.run(query, feed_dict)
+            d = collections.OrderedDict()
+            for q, r in zip(query, result):
+                d[q] = r
+            return d
 
         return f
 
-    def get_rollout_f(self, i = None, sess=None):
+    def get_rollout_f(self, i = None, sess=None, imgs=False):
         """Return the network forward function"""
         ret = []
         if not self.sess:
@@ -345,9 +384,27 @@ class DynamicsModel(object):
             if i and not restore: # model requested but not found
                 return None
 
+        query = self.inputs + self.rollout_outputs
+        print len(query)
+        if imgs:
+            query += self.rollout_reconstructions
+        print len(query)
         def f(feed_dict):
-            return self.sess.run(self.rollout_outputs, feed_dict)
+            result = self.sess.run(query, feed_dict)
+            d = collections.OrderedDict()
+            for q, r in zip(query, result):
+                d[q] = r
+            return d
 
         return f
+
+
+    ##### NETWORK FUNCTIONS
+
+
+    def get_image_mean_tensor(self):
+        img_mean = np.load(self.conf['data_dir'] + '/train/mean.npy')
+        tiled_img = np.tile(img_mean, [self.batch_size, self.sequence_length, 1, 1, 1])
+        return tf.constant(tiled_img)
 
 
