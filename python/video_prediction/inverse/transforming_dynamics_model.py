@@ -21,13 +21,12 @@ from tensorflow.python.ops import embedding_ops
 
 import discretize
 
-# def data_generator(conf, sess):
-#     image_batch, action_batch, state_batch, object_pos_batch = read_tf_record.build_tfrecord_input(conf, training=True)
-#     while True:
-#         print "getting data"
-#         image_data, action_data, state_data, object_pos = sess.run([image_batch, action_batch, state_batch, object_pos_batch])
-#         print "got data"
-#         yield image_data, action_data, state_data, object_pos
+# import hack
+import sys
+import os
+HERE_DIR = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(HERE_DIR+"/..")
+from utils_vpred import create_gif
 
 def init_weights(name, shape):
     return tf.get_variable(name, shape=shape, initializer=tf.random_normal_initializer(0, 0.01))
@@ -107,19 +106,19 @@ def transforming_conv_network(img, reuse=False):
             net = tf.sigmoid(net)
     return net
 
-def action_pred_network(f1, f2, reuse=False, N=20):
+def action_pred_network(fs, reuse=False, N=20):
     """N is the discretization bins"""
     with tf.variable_scope('actionpred', reuse=reuse) as sc:
         with slim.arg_scope([slim.fully_connected],
             weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
             weights_regularizer=slim.l2_regularizer(0.0005),
             activation_fn=tf.nn.elu, reuse=reuse):
-            net = tf.concat(1, [f1, f2])
+            net = tf.concat(1, fs)
             net = slim.fully_connected(net, 100, scope='fc_1')
             net = slim.fully_connected(net, N * 2, scope='fc_2', activation_fn=None)
             return tf.reshape(net, [-1, 2, N])
 
-def forward_pred_network(f1, u, reuse=False, N=20, fsize=100):
+def forward_pred_network(fs, u, reuse=False, N=20, fsize=100):
     """
     fcsize is the size of f1 and f2"""
     u = tf.reshape(u, [-1, 2*N])
@@ -132,15 +131,14 @@ def forward_pred_network(f1, u, reuse=False, N=20, fsize=100):
             # print u.get_shape()
             # print reuse
             # U = slim.fully_connected(u, 100)
-            net = tf.concat(1, [f1, u])
+            net = tf.concat(1, fs + [u])
             net = slim.fully_connected(net, 100, scope='fc_1')
             net = slim.fully_connected(net, 100, scope='fc_2')
             net = slim.fully_connected(net, fsize, scope='fc_3', activation_fn=tf.sigmoid)
             return net
 
-def rollout_network(f1, actions, reuse=True, N=20, fsize=100, seqlen=15, imgs=False):
+def rollout_network(fs, actions, reuse=True, N=20, fsize=100, seqlen=15, imgs=False):
     u = tf.reshape(actions, [-1, seqlen, 2*N])
-    f = f1
     outputs = []
     reconstructions = []
     for i in range(seqlen-1):
@@ -153,11 +151,14 @@ def rollout_network(f1, actions, reuse=True, N=20, fsize=100, seqlen=15, imgs=Fa
                 # print u.get_shape()
                 # print reuse
                 # U = slim.fully_connected(u, 100)
-                net = tf.concat(1, [f, u[:, i, :]])
+                net = tf.concat(1, fs + [u[:, i, :]])
                 net = slim.fully_connected(net, 100, scope='fc_1')
                 net = slim.fully_connected(net, 100, scope='fc_2')
                 f = slim.fully_connected(net, fsize, scope='fc_3', activation_fn=tf.sigmoid)
                 outputs.append(f)
+
+                fs.pop(0)
+                fs.append(f)
     if imgs:
         for i in range(seqlen-1):
             f = outputs[i]
@@ -213,6 +214,7 @@ class DynamicsModel(object):
         self.dsize = self.conf.get('discretize', 20)
         self.batch_size = self.conf['batch_size']
         self.sequence_length = self.conf['sequence_length']
+        self.context_frames = self.conf['context_frames']
 
         transformed_image_batch = image_batch
         if self.conf['transform'] == "meansub":
@@ -251,19 +253,23 @@ class DynamicsModel(object):
         self.correct_predictions = []
         self.forward_predictions = []
         self.forward_losses = []
+        feats = [self.img_features[0] for _ in range(self.context_frames)]
         for i in range(self.conf['sequence_length'] - 1):
             f1 = self.img_features[i]
             f2 = self.img_features[i+1]
+
+            feats.pop(0)
+            feats.append(f1)
             u = tf.reshape(action_batch[:, i, :, :], [-1, 2, self.dsize])
 
-            a = action_pred_network(f1, f2, i != 0, self.dsize)
+            a = action_pred_network(feats, i != 0, self.dsize)
             l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, u))
             c = tf.equal(tf.argmax(a, 2), tf.argmax(u, 2))
             self.correct_predictions.append(tf.cast(c, tf.float32))
             self.action_preds.append(a)
             self.action_loss.append(l)
 
-            f = forward_pred_network(f1, u, i != 0, self.dsize, self.fsize)
+            f = forward_pred_network(feats, u, i != 0, self.dsize, self.fsize)
             l = tf.reduce_mean(tf.nn.l2_loss(f2 - f))
             self.forward_predictions.append(f)
             self.forward_losses.append(l)
@@ -284,7 +290,8 @@ class DynamicsModel(object):
         self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss + mu3 * self.reconstruction_loss
         self.transformer_loss = -self.inverse_loss + mu1 * tf.reduce_mean(self.t_masks)
 
-        self.rollout_outputs, self.rollout_reconstructions = rollout_network(self.img_features[0], self.action_batch, imgs=True)
+        feats = [self.img_features[0] for _ in range(self.context_frames)]
+        self.rollout_outputs, self.rollout_reconstructions = rollout_network(feats, self.action_batch, imgs=True)
 
         # make a training network
         if seq % 2 == 1:
@@ -327,6 +334,8 @@ class DynamicsModel(object):
         self.train_network.dispIter_ = 100
         self.train_network.saveIter_ = 1000
         self.train_network.train(self.train_batch, self.train_batch, use_existing=use_existing, sess=self.sess, init_path=init_name)
+
+        self.save_rollout_gifs()
 
     def train_transformer(self):
         """trash"""
@@ -398,12 +407,36 @@ class DynamicsModel(object):
 
         return f
 
+    def save_rollout_gifs(self):
+        f = self.get_rollout_f(imgs=True)
+        result = self.run('test', f=f)[0]
+        reconstructions = result.values()[16:]
+        image_data, action_data = result.values()[:2]
+
+        folder = self.network.outputDir_
+
+        mean = np.zeros((64, 64, 3))
+        if self.conf['transform'] == "meansub":
+            mean = self.get_image_mean_array()
+
+        for b in range(32):
+            ims = []
+            for i in range(14):
+                pred_im = (reconstructions[i][b, :, :, :] + mean) * 256
+                real_im = image_data[b, i+1, :, :, :] * 256
+                im = np.concatenate([pred_im, real_im], 1)
+                ims.append(im)
+            create_gif.npy_to_gif(ims, folder + '/' + str(b))
+
 
     ##### NETWORK FUNCTIONS
 
+    def get_image_mean_array(self):
+        img_mean = np.load(self.conf['data_dir'] + '/train/mean.npy')
+        return img_mean
 
     def get_image_mean_tensor(self):
-        img_mean = np.load(self.conf['data_dir'] + '/train/mean.npy')
+        img_mean = self.get_image_mean_array()
         tiled_img = np.tile(img_mean, [self.batch_size, self.sequence_length, 1, 1, 1])
         return tf.constant(tiled_img)
 

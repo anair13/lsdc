@@ -1,5 +1,0 @@
-
-list of lists [[foo, bar], []]
-
-def find_repeats(dir):
-
