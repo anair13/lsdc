@@ -64,11 +64,6 @@ agent = {
     'conditions': common['conditions'],
     'T': 15,
     'skip_first': 0,
-    # 'sensor_dims': SENSOR_DIMS,
-    # 'state_include': [JOINT_ANGLES, JOINT_VELOCITIES],
-    # 'obs_include': [JOINT_ANGLES, JOINT_VELOCITIES],
-    # 'joint_angles': SENSOR_DIMS[JOINT_ANGLES],  #adding 7 dof for position and orentation of free object
-    # 'joint_velocities': SENSOR_DIMS[JOINT_VELOCITIES],
     'additional_viewer': True,
     'image_dir': common['data_files_dir'] + "imagedata_file",
     'image_height' : IMAGE_HEIGHT,
@@ -98,7 +93,7 @@ policy = {
 
 
 config = {
-    'save_data': True,
+    'save_data': False,
     'start_index':0,
     'end_index': 1,
     'verbose_policy_trials': 0,

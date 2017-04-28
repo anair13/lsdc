@@ -31,7 +31,7 @@ SAVE_INTERVAL = 2000
 FLAGS = flags.FLAGS
 flags.DEFINE_string('hyper', '', 'hyperparameters configuration file')
 flags.DEFINE_string('visualize', '', 'model within hyperparameter folder from which to create gifs')
-flags.DEFINE_integer('device', 0 ,'the value for CUDA_VISIBLE_DEVICES variable')
+flags.DEFINE_integer('device', 0 ,'the value for CUDA_VISIBLE_DEVICES variable, -1 uses cpu')
 flags.DEFINE_string('pretrained', None, 'path to model file from which to resume training')
 
 ## Helper functions
@@ -93,22 +93,13 @@ class Model(object):
                  images=None,
                  actions=None,
                  states=None,
-                 sequence_length=None,
                  reuse_scope=None,
                  pix_distrib=None):
-
-        # if conf['downsize']:
-        #     construct_model = conf['downsize']
-        # else:
-        #     from prediction_model import construct_model
 
         if 'prediction_model' in conf:
             construct_model = conf['prediction_model']
         else:
             from prediction_model_downsized_lesslayer import construct_model
-
-        if sequence_length is None:
-            sequence_length = conf['sequence_length']
 
         self.prefix = prefix = tf.placeholder(tf.string, [])
         self.iter_num = tf.placeholder(tf.float32, [])
@@ -222,10 +213,19 @@ class Model(object):
 
 
 def main(unused_argv, conf_script= None):
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(FLAGS.device)
-    print 'using CUDA_VISIBLE_DEVICES=', FLAGS.device
-    from tensorflow.python.client import device_lib
-    print device_lib.list_local_devices()
+
+    if FLAGS.device ==-1:   # using cpu!
+        tfconfig = tf.ConfigProto(
+            device_count={'GPU': 0}
+        )
+    else:
+        print 'using CUDA_VISIBLE_DEVICES=', FLAGS.device
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(FLAGS.device)
+        tfconfig = gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.9)
+        tf.ConfigProto(gpu_options=gpu_options)
+
+        from tensorflow.python.client import device_lib
+        print device_lib.list_local_devices()
 
     if conf_script == None: conf_file = FLAGS.hyper
     else: conf_file = conf_script
@@ -258,9 +258,9 @@ def main(unused_argv, conf_script= None):
     # Make saver.
     saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.VARIABLES), max_to_keep=0)
 
-    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.9)
+
     # Make training session.
-    sess = tf.InteractiveSession(config= tf.ConfigProto(gpu_options=gpu_options))
+    sess = tf.InteractiveSession(config= tfconfig)
     summary_writer = tf.train.SummaryWriter(
         conf['output_dir'], graph=sess.graph, flush_secs=10)
 

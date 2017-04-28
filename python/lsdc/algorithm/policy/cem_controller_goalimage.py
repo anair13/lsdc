@@ -58,12 +58,13 @@ class CEM_controller(Policy):
             self.M = self.netconf['batch_size']
             assert self.nactions * self.repeat == self.netconf['sequence_length']
             self.predictor = predictor
-            self.K = 10  # only consider K best samples for refitting
         else:
             self.M = self.policyparams['num_samples']
-            self.K = 10  # only consider K best samples for refitting
+
+        self.K = 10  # only consider K best samples for refitting
 
         self.gtruth_images = [np.zeros((self.M, 64, 64, 3)) for _ in range(self.nactions * self.repeat)]
+        self.gtruth_states = np.zeros((self.nactions * self.repeat, self.M, 4))
 
         # the full horizon is actions*repeat
         # self.action_cost_mult = 0.00005
@@ -260,19 +261,28 @@ class CEM_controller(Policy):
                                             gen_states[tstep][smp, :2], numpix=480)
 
         #evaluate distances to goalstate
-        sq_distance = np.zeros(self.netconf['batch_size'])
+        scores = np.zeros(self.netconf['batch_size'])
 
         if 'ballinvar' not in self.policyparams:  # the standard
 
-            if not 'usepixelerror' in self.policyparams:
+            if 'usepixelerror' in self.policyparams:
                 for b in range(self.netconf['batch_size']):
-                    sq_distance[b] = np.linalg.norm(self.goal_state.flatten()
-                                                    - inf_low_state[-1][b].flatten())
-            else:
-                print 'using pixelerror..'
-                for b in range(self.netconf['batch_size']):
-                    sq_distance[b] = np.linalg.norm(
+                    scores[b] = np.linalg.norm(
                         (self.goal_image[0][0] - gen_images[-1][b]).flatten())
+
+            elif 'rewardnetconf' in self.policyparams:
+                reward_func = self.policyparams['rewardnet_func']
+                softmax_out =  reward_func(gen_images[-1], self.goal_image[0,0])
+                # compute expected number time-steps
+                if 'rewardmodel_sequence_length' in self.policyparams:
+                    rewmodel_s_length = self.policyparams['rewardmodel_sequence_length']
+                else:
+                    rewmodel_s_length = 15
+                scores = np.sum(softmax_out * np.arange(rewmodel_s_length-1), axis=1)
+            else:
+                    for b in range(self.netconf['batch_size']):
+                        scores[b] = np.linalg.norm(self.goal_state.flatten()
+                                                        - inf_low_state[-1][b].flatten())
 
         else:
             selected_scores = np.zeros(self.netconf['batch_size'], dtype= np.int)
@@ -284,7 +294,7 @@ class CEM_controller(Policy):
 
                 selected_scores[b] = np.argmin(scores_diffballpos)
 
-                sq_distance[b] = np.min(scores_diffballpos)
+                scores[b] = np.min(scores_diffballpos)
 
         # compare prediciton with simulation
         if self.verbose: #and itr == self.policyparams['iterations']-1:
@@ -292,7 +302,8 @@ class CEM_controller(Policy):
 
             file_path = self.netconf['current_dir'] + '/verbose'
 
-            bestindices = sq_distance.argsort()[:self.K]
+            bestindices = scores.argsort()[:self.K]
+            bestscores = [scores[ind] for ind in bestindices]
 
             def best(inputlist):
                 outputlist = [np.zeros_like(a)[:self.K] for a in inputlist]
@@ -309,9 +320,9 @@ class CEM_controller(Policy):
             comp_video(file_path, gif_name='check_eval_t{}'.format(self.t))
 
             f = open(file_path + '/actions_last_iter_t{}'.format(self.t), 'w')
-            sorted = sq_distance.argsort()
+            sorted = scores.argsort()
             for i in range(actions.shape[0]):
-                f.write('index: {0}, score: {1}, rank: {2}'.format(i, sq_distance[i],
+                f.write('index: {0}, score: {1}, rank: {2}'.format(i, scores[i],
                                                                    np.where(sorted == i)[0][0]))
                 f.write('action {}\n'.format(actions[i]))
 
@@ -321,9 +332,23 @@ class CEM_controller(Policy):
             #     goalim  = self.goal_image[selected_scores[bestind]]
             #     Image.fromarray((goalim * 255.).astype(np.uint8)).show()
 
-            pdb.set_trace()
 
-        return sq_distance
+        bestindex = scores.argsort()[0]
+        if 'store_video_prediction' in self.agentparams and\
+                itr == (self.policyparams['iterations']-1):
+            self.terminal_pred = gen_images[-1][bestindex]
+
+        if itr == (self.policyparams['iterations']-2):
+            self.verbose = True
+
+        if 'store_whole_pred' in self.agentparams and \
+            itr == (self.policyparams['iterations'] - 1):
+            self.best_gen_images = [img[bestindex] for img in gen_images]
+            self.best_gtruth_images = [img[bestindex] for img in self.gtruth_images]
+            self.best_actions = actions[bestindex]
+            self.verbose = False
+
+        return scores
 
 
     def sim_rollout(self, actions, smp, itr):
@@ -367,6 +392,9 @@ class CEM_controller(Policy):
                     img = np.fromstring(img_string, dtype='uint8').reshape(
                         (height, width, 3))[::-1, :, :]
                     self.gtruth_images[t][smp] = img
+                    self.gtruth_states[t][smp] = np.concatenate([self.model.data.qpos[:2].squeeze(),
+                                                                self.model.data.qvel[:2].squeeze()], axis=0)
+
                     # self.check_conversion()
 
     def check_conversion(self):
@@ -404,6 +432,7 @@ class CEM_controller(Policy):
         if t == 0:
             action = np.zeros(2)
             self.target = copy.deepcopy(self.init_model.data.qpos[:2].squeeze())
+
             self.goal_state = self.inf_goal_state()
 
         else:
@@ -490,7 +519,7 @@ class CEM_controller(Policy):
                                                                 input_state=last_states,
                                                                 input_actions = actions)
 
-    #TODO: Look at the predictions at the goalstate!!!!!!!!!
+        #TODO: Look at the predictions at the goalstate!!!!!!!!!
 
         # taking the inferred latent state of the last time step
 

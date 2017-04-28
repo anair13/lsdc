@@ -12,10 +12,8 @@ import imp
 
 
 # Dimension of the state and action.
-STATE_DIM = 4
-ACION_DIM = 2
-OBJECT_POS_DIM = 8
-
+STATE_DIM = 3
+ACION_DIM = 4
 
 def build_tfrecord_input(conf, training=True):
     """Create input tfrecord tensors.
@@ -51,7 +49,7 @@ def build_tfrecord_input(conf, training=True):
     reader = tf.TFRecordReader()
     _, serialized_example = reader.read(filename_queue)
 
-    image_aux1_seq, image_main_seq, state_seq, action_seq, object_pos_seq = [], [], [], [], []
+    image_aux1_seq, image_main_seq, endeffector_pos_seq, action_seq, object_pos_seq = [], [], [], [], []
 
 
     load_indx = range(0, 30, conf['skip_frame'])
@@ -61,14 +59,15 @@ def build_tfrecord_input(conf, training=True):
     for i in load_indx:
         image_main_name = str(i) + '/image_main/encoded'
         image_aux1_name = str(i) + '/image_aux1/encoded'
-        # action_name = 'move/' +str(i) + '/action'
+        action_name = str(i) + '/action'
+        endeffector_pos_name = str(i) + '/endeffector_pos'
         # state_name = 'move/' +str(i) + '/state'
 
         features = {
                     image_main_name: tf.FixedLenFeature([1], tf.string),
                     image_aux1_name: tf.FixedLenFeature([1], tf.string),
-                    # action_name: tf.FixedLenFeature([ACION_DIM], tf.float32),
-                    # state_name: tf.FixedLenFeature([STATE_DIM], tf.float32)
+                    action_name: tf.FixedLenFeature([ACION_DIM], tf.float32),
+                    endeffector_pos_name: tf.FixedLenFeature([STATE_DIM], tf.float32),
         }
 
         features = tf.parse_single_example(serialized_example, features=features)
@@ -110,35 +109,33 @@ def build_tfrecord_input(conf, training=True):
         image = tf.cast(image, tf.float32) / 255.0
         image_aux1_seq.append(image)
 
-
-        # state = tf.reshape(features[state_name], shape=[1, STATE_DIM])
-        # state_seq.append(state)
-        # action = tf.reshape(features[action_name], shape=[1, ACION_DIM])
-        # action_seq.append(action)
+        endeffector_pos = tf.reshape(features[endeffector_pos_name], shape=[1, STATE_DIM])
+        endeffector_pos_seq.append(endeffector_pos)
+        action = tf.reshape(features[action_name], shape=[1, ACION_DIM])
+        action_seq.append(action)
 
     image_main_seq = tf.concat(0, image_main_seq)
 
     if conf['visualize']: num_threads = 1
     else: num_threads = np.min((conf['batch_size'], 32))
 
-
-    if 'ignore_state_action':
-        [image_main_batch, image_aux_batch] = tf.train.batch(
+    if 'ignore_state_action' in conf:
+        [image_main_batch, image_aux1_batch] = tf.train.batch(
                                     [image_main_seq, image_aux1_seq],
                                     conf['batch_size'],
                                     num_threads=num_threads,
                                     capacity=100 * conf['batch_size'])
-        return image_main_batch, image_aux_batch, None, None
+        return image_main_batch, image_aux1_batch, None, None
 
     else:
-        state_seq = tf.concat(0, state_seq)
+        endeffector_pos_seq = tf.concat(0, endeffector_pos_seq)
         action_seq = tf.concat(0, action_seq)
-        [image_main_batch, image_aux_batch, action_batch, state_batch] = tf.train.batch(
-                                    [image_main_seq, action_seq, state_seq],
+        [image_main_batch, image_aux1_batch, action_batch, endeffector_pos_batch] = tf.train.batch(
+                                    [image_main_seq,image_aux1_seq, action_seq, endeffector_pos_seq],
                                     conf['batch_size'],
                                     num_threads=num_threads,
                                     capacity=100 * conf['batch_size'])
-        return image_main_batch, image_aux_batch, action_batch, state_batch
+        return image_main_batch, image_aux1_batch, action_batch, endeffector_pos_batch
 
 
 ##### code below is used for debugging
@@ -257,8 +254,7 @@ if __name__ == '__main__':
     print 'using CUDA_VISIBLE_DEVICES=', os.environ["CUDA_VISIBLE_DEVICES"]
     conf = {}
 
-    # DATA_DIR = '/home/frederik/Documents/pushing_data/settled_scene_rnd3/train'
-    DATA_DIR = '/home/frederik/Documents/lsdc/pushing_data/sawyer_2cam/train'
+    DATA_DIR = '/home/frederik/Documents/lsdc/pushing_data/sawyer_noup_29/train'
 
     conf['schedsamp_k'] = -1  # don't feed ground truth
     conf['data_dir'] = DATA_DIR  # 'directory containing data_files.' ,
@@ -267,7 +263,8 @@ if __name__ == '__main__':
     conf['sequence_length']= 15      # 'sequence length, including context frames.'
     conf['use_state'] = True
     conf['batch_size']= 32
-    conf['visualize']=False
+    conf['visualize']=True
+    conf['visual_file'] = '/home/frederik/Documents/lsdc/pushing_data/sawyer_noup_29/train/traj_0_to_255.tfrecords'
     conf['use_object_pos'] = True
 
     print '-------------------------------------------------------------------'
@@ -303,6 +300,3 @@ if __name__ == '__main__':
             img.show()
 
             pdb.set_trace()
-
-
-

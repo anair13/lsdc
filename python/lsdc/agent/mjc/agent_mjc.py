@@ -44,7 +44,7 @@ class AgentMuJoCo(Agent):
         # self._vel_idx = range( self._hyperparams['joint_angles'], self._hyperparams['joint_velocities'] + self._hyperparams['joint_angles'])
 
 
-        gofast = True
+        gofast = False
         self._small_viewer = mujoco_py.MjViewer(visible=True,
                                                 init_width=self._hyperparams['image_width'],
                                                 init_height=self._hyperparams['image_height'],
@@ -86,8 +86,6 @@ class AgentMuJoCo(Agent):
         # Take the sample.
         for t in range(self.T):
 
-
-
             traj.X_full[t, :] = self._model.data.qpos[:2].squeeze()
             traj.Xdot_full[t, :] = self._model.data.qvel[:2].squeeze()
             traj.X_Xdot_full[t, :] =  np.concatenate([traj.X_full[t, :], traj.Xdot_full[t, :]])
@@ -97,10 +95,10 @@ class AgentMuJoCo(Agent):
             if not self._hyperparams['data_collection']:
                 traj.score[t] = self.eval_action(traj, t)
 
-            self._store_image(t, traj)
+            self._store_image(t, traj, policy)
 
             if self._hyperparams['data_collection'] or 'random_baseline' in self._hyperparams:
-                    mj_U, target_inc = policy.act(traj.X_full[t, :], traj.Xdot_full[t, :], traj._sample_images, t)
+                mj_U, target_inc = policy.act(traj.X_full[t, :], traj.Xdot_full[t, :], traj._sample_images, t)
             else:
                 mj_U, pos, ind, targets = policy.act(traj.X_full, traj.Xdot_full, traj._sample_images, t, init_model=self._model)
 
@@ -126,8 +124,9 @@ class AgentMuJoCo(Agent):
                 self._model.data.ctrl = mj_U
                 self._model.step()    #simulate the model in mujoco
 
-            # print 'accumulated impulse', t
-            # print accum_touch
+            traj.touchdata[t, :] = accum_touch.squeeze()
+            print 'accumulated force', t
+            print accum_touch
 
         if not self._hyperparams['data_collection']:
             if 'use_goalimage' in self._hyperparams:
@@ -233,7 +232,7 @@ class AgentMuJoCo(Agent):
             # print 'correction force:', force
         return force
 
-    def _store_image(self,t, traj):
+    def _store_image(self,t, traj, policy):
         """
         store image at time index t
         """
@@ -256,6 +255,15 @@ class AgentMuJoCo(Agent):
         img = np.fromstring(img_string, dtype='uint8').reshape((height, width, self._hyperparams['image_channels']))[::-1,:,:]
 
         traj._sample_images[t,:,:,:] = img
+
+        if 'store_video_prediction' in self._hyperparams:
+            if t > 1:
+                traj.final_predicted_images.append((policy.terminal_pred*255.).astype(np.uint8))
+
+        if 'store_whole_pred' in self._hyperparams:
+            if t > 1:
+                traj.predicted_images = policy.best_gen_images
+                traj.gtruth_images = policy.best_gtruth_images
 
 
     def add_traj_visual(self, img, traj, bestindices, targets):

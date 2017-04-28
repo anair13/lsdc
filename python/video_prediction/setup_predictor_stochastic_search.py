@@ -30,7 +30,7 @@ class Tower(object):
         # picking different subset of the actions for each gpu
         act_startidx = gpu_id * nsmp_per_gpu
         per_gpu_actions = tf.slice(self.actions, [act_startidx, 0, 0], [nsmp_per_gpu, -1, -1])
-
+        print 'startindex for gpu {0}: {1}'.format(gpu_id, act_startidx)
         per_gpu_noise = tf.truncated_normal([nsmp_per_gpu, conf['sequence_length'], conf['noise_dim']],
                                          mean=0.0, stddev=1.0, dtype=tf.float32, seed=None, name=None)
 
