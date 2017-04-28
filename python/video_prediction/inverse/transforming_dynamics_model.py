@@ -131,7 +131,6 @@ class DynamicsModel(object):
                 self.img_reconstructions.append(I)
                 self.img_reconstruction_losses.append(l)
 
-
         self.action_preds = []
         self.action_loss = []
         self.correct_predictions = []
