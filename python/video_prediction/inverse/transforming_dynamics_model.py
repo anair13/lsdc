@@ -34,25 +34,6 @@ def init_weights(name, shape):
 def print_activations(t):
     print(t.op.name, ' ', t.get_shape().as_list())
 
-def make_network(x, network_size):
-    """Makes fully connected network with input x and given layer sizes.
-    Assume len(network_size) >= 2
-    """
-    input_size = network_size[0]
-    output_size = network_size.pop()
-    a = input_size
-    cur = x
-    i = 0
-    for a, b in zip(network_size, network_size[1:]):
-        W = init_weights("W" + str(i), [a, b])
-        B = init_weights("B" + str(i), [1, b])
-        cur = tf.nn.elu(tf.matmul(cur, W) + B)
-        i += 1
-    W = init_weights("W" + str(i), [b, output_size])
-    B = init_weights("B" + str(i), [1, output_size])
-    prediction = tf.matmul(cur, W) + B
-    return prediction
-
 def dict_to_string(params):
     excludes = ['data_dir']
     print params
@@ -63,107 +44,6 @@ def dict_to_string(params):
         if params[key] is not None:
             name = name + str(key) + "_" + str(params[key]) + "/"
     return name[:-1]
-
-def conv_network(img, reuse=False, fsize=100):
-    with tf.variable_scope('conv', reuse=reuse) as scope:
-        with slim.arg_scope([slim.conv2d], padding='SAME',
-                          # weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
-                          weights_regularizer=slim.l2_regularizer(0.0005), reuse=reuse):
-            net = slim.conv2d(img, 32, [6, 6], 2, padding='SAME', scope='conv1')
-            net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
-            net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
-            net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv4')
-            net = tf.reshape(net, [-1, 512])
-            net = slim.fully_connected(net, fsize, scope='fc5', activation_fn=tf.sigmoid)
-    return net
-
-def decoder_network(f, reuse=False):
-    with tf.variable_scope('autodecoder', reuse=reuse) as scope:
-        with slim.arg_scope([slim.conv2d], padding='SAME',
-                          # weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
-                          weights_regularizer=slim.l2_regularizer(0.0005), reuse=reuse):
-            net = slim.fully_connected(f, 512, scope='fc5')
-            net = tf.reshape(net, [-1, 4, 4, 32])
-            net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv1')
-            net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
-            net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
-            net = slim.conv2d_transpose(net, 3, [3, 3], 2, padding='SAME', scope='conv4', activation_fn=None)
-    return net
-
-def transforming_conv_network(img, reuse=False):
-    with tf.variable_scope('transformer', reuse=reuse) as scope:
-        with slim.arg_scope([slim.conv2d], padding='SAME',
-                          # weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
-                          weights_regularizer=slim.l2_regularizer(0.0005), reuse=reuse):
-            net = slim.conv2d(img, 32, [6, 6], 2, padding='SAME', scope='conv1')
-            net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
-            net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
-            net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv4')
-            net = slim.conv2d_transpose(net, 32, [3, 3], 2, padding='SAME', scope='conv5')
-            net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv6')
-            net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv7')
-            net = slim.conv2d_transpose(net, 3, [6, 6], 2, padding='SAME', scope='conv8', activation_fn=tf.sigmoid)
-            net = tf.sigmoid(net)
-    return net
-
-def action_pred_network(fs, reuse=False, N=20):
-    """N is the discretization bins"""
-    with tf.variable_scope('actionpred', reuse=reuse) as sc:
-        with slim.arg_scope([slim.fully_connected],
-            weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
-            weights_regularizer=slim.l2_regularizer(0.0005),
-            activation_fn=tf.nn.elu, reuse=reuse):
-            net = tf.concat(1, fs)
-            net = slim.fully_connected(net, 100, scope='fc_1')
-            net = slim.fully_connected(net, N * 2, scope='fc_2', activation_fn=None)
-            return tf.reshape(net, [-1, 2, N])
-
-def forward_pred_network(fs, u, reuse=False, N=20, fsize=100):
-    """
-    fcsize is the size of f1 and f2"""
-    u = tf.reshape(u, [-1, 2*N])
-    with tf.variable_scope('forwardpred', reuse=reuse) as sc:
-        with slim.arg_scope([slim.fully_connected],
-            weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
-            weights_regularizer=slim.l2_regularizer(0.0005),
-            activation_fn=tf.nn.elu, reuse=reuse):
-            # print f1.get_shape()
-            # print u.get_shape()
-            # print reuse
-            # U = slim.fully_connected(u, 100)
-            net = tf.concat(1, fs + [u])
-            net = slim.fully_connected(net, 100, scope='fc_1')
-            net = slim.fully_connected(net, 100, scope='fc_2')
-            net = slim.fully_connected(net, fsize, scope='fc_3', activation_fn=tf.sigmoid)
-            return net
-
-def rollout_network(fs, actions, reuse=True, N=20, fsize=100, seqlen=15, imgs=False):
-    u = tf.reshape(actions, [-1, seqlen, 2*N])
-    outputs = []
-    reconstructions = []
-    for i in range(seqlen-1):
-        with tf.variable_scope('forwardpred', reuse=reuse) as sc:
-            with slim.arg_scope([slim.fully_connected],
-                weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
-                weights_regularizer=slim.l2_regularizer(0.0005),
-                activation_fn=tf.nn.elu, reuse=reuse):
-                # print f1.get_shape()
-                # print u.get_shape()
-                # print reuse
-                # U = slim.fully_connected(u, 100)
-                net = tf.concat(1, fs + [u[:, i, :]])
-                net = slim.fully_connected(net, 100, scope='fc_1')
-                net = slim.fully_connected(net, 100, scope='fc_2')
-                f = slim.fully_connected(net, fsize, scope='fc_3', activation_fn=tf.sigmoid)
-                outputs.append(f)
-
-                fs.pop(0)
-                fs.append(f)
-    if imgs:
-        for i in range(seqlen-1):
-            f = outputs[i]
-            reconstructions.append(decoder_network(f, True))
-    return outputs, reconstructions
 
 def discretize_actions(x, N=20):
     batches = x.shape[0]
@@ -216,8 +96,12 @@ class DynamicsModel(object):
         self.sequence_length = self.conf['sequence_length']
         self.context_frames = self.conf['context_frames']
 
+        self.feat_activation = tf.sigmoid # bad default because of previous models
+        if self.conf.get('featactivation') == "none":
+            self.feat_activation = None 
+
         transformed_image_batch = image_batch
-        if self.conf['transform'] == "meansub":
+        if self.conf.get('transform') == "meansub":
             transformed_image_batch = transformed_image_batch - self.get_image_mean_tensor()
 
         self.t_masks = []
@@ -227,13 +111,13 @@ class DynamicsModel(object):
         for i in range(self.conf['sequence_length']):
             t_i = transformed_image_batch[:, i, :, :, :]
             if self.conf['masks']:
-                m = transforming_conv_network(transformed_image_batch[:, i, :, :, :], i != 0)
+                m = self.transforming_conv_network(transformed_image_batch[:, i, :, :, :], i != 0)
                 t_i = m * t_i
                 self.t_masks.append(m)
                 if i == 0:
                     print "mask size: ", m.get_shape()
 
-            f = conv_network(t_i, i != 0, self.fsize)
+            f = self.conv_network(t_i, i != 0)
             self.img_features.append(f)
             if i == 0:
                 print "image features: (batch, featsize)", f.get_shape()
@@ -242,7 +126,7 @@ class DynamicsModel(object):
             if autoencoder == "decode": # means no gradients passed back
                 f = tf.stop_gradient(f)
             if autoencoder:
-                I = decoder_network(f, i != 0)
+                I = self.decoder_network(f, i != 0)
                 l = tf.nn.l2_loss(I - t_i)
                 self.img_reconstructions.append(I)
                 self.img_reconstruction_losses.append(l)
@@ -262,19 +146,29 @@ class DynamicsModel(object):
             feats.append(f1)
             u = tf.reshape(action_batch[:, i, :, :], [-1, 2, self.dsize])
 
-            a = action_pred_network(feats, i != 0, self.dsize)
+            a = self.action_pred_network(feats, i != 0)
             l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, u))
             c = tf.equal(tf.argmax(a, 2), tf.argmax(u, 2))
             self.correct_predictions.append(tf.cast(c, tf.float32))
             self.action_preds.append(a)
             self.action_loss.append(l)
 
-            f = forward_pred_network(feats, u, i != 0, self.dsize, self.fsize)
-            l = tf.reduce_mean(tf.nn.l2_loss(f2 - f))
-            self.forward_predictions.append(f)
+            if self.conf.get('forwardloss') == "gaussian":
+                mu, sigma = self.forward_gaussian_pred_network(feats, u, i != 0)
+                x = (f2 - mu) / sigma
+                l = tf.reduce_mean(0.5 * x * x + tf.log(sigma))
+                self.forward_predictions.append(mu)
+                self.forward_predictions.append(sigma)
+            else:        
+                f = self.forward_pred_network(feats, u, i != 0)
+                l = tf.reduce_mean(tf.nn.l2_loss(f2 - f))
+                self.forward_predictions.append(f)
             self.forward_losses.append(l)
 
+        # compute accuracy and losses below
+
         self.accuracy = tf.reduce_mean(tf.concat(1, self.correct_predictions))
+        self.feat_norm = tf.reduce_mean([tf.abs(f) for f in self.img_features])
 
         t_vars = tf.trainable_variables()
         self.dynamics_vars = [var for var in t_vars if not 'transformer' in var.name]
@@ -291,9 +185,8 @@ class DynamicsModel(object):
         self.transformer_loss = -self.inverse_loss + mu1 * tf.reduce_mean(self.t_masks)
 
         feats = [self.img_features[0] for _ in range(self.context_frames)]
-        self.rollout_outputs, self.rollout_reconstructions = rollout_network(feats, self.action_batch, imgs=True)
+        self.rollout_outputs, self.rollout_reconstructions = self.rollout_network(feats, self.action_batch, imgs=True)
 
-        # make a training network
         if seq % 2 == 1:
             loss = self.transformer_loss
             var_list = self.transformer_vars
@@ -304,7 +197,7 @@ class DynamicsModel(object):
         self.network.add_to_losses(loss)
         self.train_network = tf_utils.TFTrain(self.inputs, self.network, batchSz=self.conf['batch_size'], initLr=self.conf['learning_rate'], var_list=var_list)
         # self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.transformer_loss, self.accuracy], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'transformer_loss', 'accuracy'])
-        self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.reconstruction_loss, self.accuracy], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'reconstruction_loss', 'accuracy'])
+        self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.reconstruction_loss, self.accuracy, self.feat_norm], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'reconstruction_loss', 'accuracy', 'feat_norm'])
 
         print "done with network setup"
 
@@ -429,7 +322,8 @@ class DynamicsModel(object):
             create_gif.npy_to_gif(ims, folder + '/' + str(b))
 
 
-    ##### NETWORK FUNCTIONS
+    ##### NETWORK CONSTRUCTION FUNCTIONS
+
 
     def get_image_mean_array(self):
         img_mean = np.load(self.conf['data_dir'] + '/train/mean.npy')
@@ -440,4 +334,123 @@ class DynamicsModel(object):
         tiled_img = np.tile(img_mean, [self.batch_size, self.sequence_length, 1, 1, 1])
         return tf.constant(tiled_img)
 
+    def conv_network(self, img, reuse=False):
+        with tf.variable_scope('conv', reuse=reuse) as scope:
+            with slim.arg_scope([slim.conv2d], padding='SAME',
+                              # weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
+                              weights_regularizer=slim.l2_regularizer(0.0005), reuse=reuse):
+                net = slim.conv2d(img, 32, [6, 6], 2, padding='SAME', scope='conv1')
+                net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
+                net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
+                net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv4')
+                net = tf.reshape(net, [-1, 512])
+                net = slim.fully_connected(net, self.fsize, scope='fc5', activation_fn=self.feat_activation)
+        return net
 
+    def decoder_network(self, f, reuse=False):
+        with tf.variable_scope('autodecoder', reuse=reuse) as scope:
+            with slim.arg_scope([slim.conv2d], padding='SAME',
+                              # weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
+                              weights_regularizer=slim.l2_regularizer(0.0005), reuse=reuse):
+                net = slim.fully_connected(f, 512, scope='fc5')
+                net = tf.reshape(net, [-1, 4, 4, 32])
+                net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv1')
+                net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
+                net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
+                net = slim.conv2d_transpose(net, 3, [3, 3], 2, padding='SAME', scope='conv4', activation_fn=None)
+        return net
+
+    def transforming_conv_network(self, img, reuse=False):
+        with tf.variable_scope('transformer', reuse=reuse) as scope:
+            with slim.arg_scope([slim.conv2d], padding='SAME',
+                              # weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
+                              weights_regularizer=slim.l2_regularizer(0.0005), reuse=reuse):
+                net = slim.conv2d(img, 32, [6, 6], 2, padding='SAME', scope='conv1')
+                net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
+                net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
+                net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv4')
+                net = slim.conv2d_transpose(net, 32, [3, 3], 2, padding='SAME', scope='conv5')
+                net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv6')
+                net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv7')
+                net = slim.conv2d_transpose(net, 3, [6, 6], 2, padding='SAME', scope='conv8', activation_fn=tf.sigmoid)
+                net = tf.sigmoid(net)
+        return net
+
+    def action_pred_network(self, fs, reuse=False):
+        """N is the discretization bins"""
+        with tf.variable_scope('actionpred', reuse=reuse) as sc:
+            with slim.arg_scope([slim.fully_connected],
+                weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
+                weights_regularizer=slim.l2_regularizer(0.0005),
+                activation_fn=tf.nn.elu, reuse=reuse):
+                net = tf.concat(1, fs)
+                net = slim.fully_connected(net, 100, scope='fc_1')
+                net = slim.fully_connected(net, self.dsize * 2, scope='fc_2', activation_fn=None)
+                return tf.reshape(net, [-1, 2, self.dsize])
+
+    def forward_pred_network(self, fs, u, reuse=False):
+        """
+        fcsize is the size of f1 and f2"""
+        u = tf.reshape(u, [-1, 2*self.dsize])
+        with tf.variable_scope('forwardpred', reuse=reuse) as sc:
+            with slim.arg_scope([slim.fully_connected],
+                weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
+                weights_regularizer=slim.l2_regularizer(0.0005),
+                activation_fn=tf.nn.elu, reuse=reuse):
+                # print f1.get_shape()
+                # print u.get_shape()
+                # print reuse
+                # U = slim.fully_connected(u, 100)
+                net = tf.concat(1, fs + [u])
+                net = slim.fully_connected(net, 100, scope='fc_1')
+                net = slim.fully_connected(net, 100, scope='fc_2')
+                net = slim.fully_connected(net, self.fsize, scope='fc_3', activation_fn=self.feat_activation)
+                return net
+
+    def forward_gaussian_pred_network(self, fs, u, reuse=False):
+        """
+        fcsize is the size of f1 and f2"""
+        u = tf.reshape(u, [-1, 2*self.dsize])
+        with tf.variable_scope('forwardpred', reuse=reuse) as sc:
+            with slim.arg_scope([slim.fully_connected],
+                weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
+                weights_regularizer=slim.l2_regularizer(0.0005),
+                activation_fn=tf.nn.elu, reuse=reuse):
+                # print f1.get_shape()
+                # print u.get_shape()
+                # print reuse
+                # U = slim.fully_connected(u, 100)
+                net = tf.concat(1, fs + [u])
+                net = slim.fully_connected(net, 100, scope='fc_1')
+                net = slim.fully_connected(net, 100, scope='fc_2')
+                mu = slim.fully_connected(net, self.fsize, scope='fc_3', activation_fn=self.feat_activation)
+                sigma = slim.fully_connected(net, self.fsize, scope='fc_3_sigma') + 1.0
+                return mu, sigma
+
+    def rollout_network(self, fs, actions, reuse=True, imgs=False):
+        u = tf.reshape(actions, [-1, self.sequence_length, 2*self.dsize])
+        outputs = []
+        reconstructions = []
+        for i in range(self.sequence_length - 1):
+            with tf.variable_scope('forwardpred', reuse=reuse) as sc:
+                with slim.arg_scope([slim.fully_connected],
+                    weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
+                    weights_regularizer=slim.l2_regularizer(0.0005),
+                    activation_fn=tf.nn.elu, reuse=reuse):
+                    # print f1.get_shape()
+                    # print u.get_shape()
+                    # print reuse
+                    # U = slim.fully_connected(u, 100)
+                    net = tf.concat(1, fs + [u[:, i, :]])
+                    net = slim.fully_connected(net, 100, scope='fc_1')
+                    net = slim.fully_connected(net, 100, scope='fc_2')
+                    f = slim.fully_connected(net, self.fsize, scope='fc_3', activation_fn=tf.sigmoid)
+                    outputs.append(f)
+
+                    fs.pop(0)
+                    fs.append(f)
+        if imgs:
+            for i in range(self.sequence_length - 1):
+                f = outputs[i]
+                reconstructions.append(self.decoder_network(f, True))
+        return outputs, reconstructions

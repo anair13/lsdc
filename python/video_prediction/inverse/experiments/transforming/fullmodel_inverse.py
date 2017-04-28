@@ -29,9 +29,10 @@ def get_train_conf():
     conf['run'] = 0
     conf['mu1'] = 0 # transforming mask regularizing weight
     conf['mu2'] = 0.000001 # forward weight
-    conf['mu3'] = 0 # autoencoder weight
+    conf['mu3'] = 1 # autoencoder weight
     conf['seq'] = 0 # to alternate training phase
     conf['autoencoder'] = "decode" # autoencoder mode, decode means do not pass gradients, None means no autoencoder at all
+    conf['featactivation'] = "none" # default sigmoid
     return conf
 
 if __name__ == "__main__":
