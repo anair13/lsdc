@@ -265,7 +265,7 @@ class DynamicsModel(object):
             if i and not restore: # model requested but not found
                 return None
 
-        query = self.action_preds[0:1] + self.inputs + self.t_masks[0:1] + self.img_reconstructions[0:1]
+        query = self.action_preds + self.inputs + self.t_masks + self.img_reconstructions + self.forward_predictions + self.img_features
         def f(feed_dict):
             result = self.sess.run(query, feed_dict)
             d = collections.OrderedDict()
@@ -423,7 +423,7 @@ class DynamicsModel(object):
                 net = slim.fully_connected(net, 100, scope='fc_1')
                 net = slim.fully_connected(net, 100, scope='fc_2')
                 mu = slim.fully_connected(net, self.fsize, scope='fc_3', activation_fn=self.feat_activation)
-                sigma = slim.fully_connected(net, self.fsize, scope='fc_3_sigma') + 1.0
+                sigma = slim.fully_connected(net, self.fsize, scope='fc_3_sigma', activation_fn=tf.nn.relu) + 0.1
                 return mu, sigma
 
     def rollout_network(self, fs, actions, reuse=True, imgs=False):
@@ -443,7 +443,7 @@ class DynamicsModel(object):
                     net = tf.concat(1, fs + [u[:, i, :]])
                     net = slim.fully_connected(net, 100, scope='fc_1')
                     net = slim.fully_connected(net, 100, scope='fc_2')
-                    f = slim.fully_connected(net, self.fsize, scope='fc_3', activation_fn=tf.sigmoid)
+                    f = slim.fully_connected(net, self.fsize, scope='fc_3', activation_fn=self.feat_activation)
                     outputs.append(f)
 
                     fs.pop(0)
