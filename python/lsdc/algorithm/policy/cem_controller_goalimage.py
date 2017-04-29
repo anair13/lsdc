@@ -297,34 +297,34 @@ class CEM_controller(Policy):
                 scores[b] = np.min(scores_diffballpos)
 
         # compare prediciton with simulation
-        if self.verbose: #and itr == self.policyparams['iterations']-1:
-            # print 'creating visuals for best sampled actions at last iteration...'
+        # if self.verbose: #and itr == self.policyparams['iterations']-1:
+        #     # print 'creating visuals for best sampled actions at last iteration...'
 
-            file_path = self.netconf['current_dir'] + '/verbose'
+        #     file_path = self.netconf['current_dir'] + '/verbose'
 
-            bestindices = scores.argsort()[:self.K]
-            bestscores = [scores[ind] for ind in bestindices]
+        #     bestindices = scores.argsort()[:self.K]
+        #     bestscores = [scores[ind] for ind in bestindices]
 
-            def best(inputlist):
-                outputlist = [np.zeros_like(a)[:self.K] for a in inputlist]
+        #     def best(inputlist):
+        #         outputlist = [np.zeros_like(a)[:self.K] for a in inputlist]
 
-                for ind in range(self.K):
-                    for tstep in range(len(inputlist)):
-                        outputlist[tstep][ind] = inputlist[tstep][bestindices[ind]]
-                return outputlist
+        #         for ind in range(self.K):
+        #             for tstep in range(len(inputlist)):
+        #                 outputlist[tstep][ind] = inputlist[tstep][bestindices[ind]]
+        #         return outputlist
 
-            self.gtruth_images = [img.astype(np.float) / 255. for img in self.gtruth_images]  #[1:]
-            cPickle.dump(best(gen_images), open(file_path + '/gen_image_seq.pkl', 'wb'))
-            cPickle.dump(best(self.gtruth_images), open(file_path + '/ground_truth.pkl', 'wb'))
-            print 'written files to:' + file_path
-            comp_video(file_path, gif_name='check_eval_t{}'.format(self.t))
+        #     self.gtruth_images = [img.astype(np.float) / 255. for img in self.gtruth_images]  #[1:]
+        #     cPickle.dump(best(gen_images), open(file_path + '/gen_image_seq.pkl', 'wb'))
+        #     cPickle.dump(best(self.gtruth_images), open(file_path + '/ground_truth.pkl', 'wb'))
+        #     print 'written files to:' + file_path
+        #     comp_video(file_path, gif_name='check_eval_t{}'.format(self.t))
 
-            f = open(file_path + '/actions_last_iter_t{}'.format(self.t), 'w')
-            sorted = scores.argsort()
-            for i in range(actions.shape[0]):
-                f.write('index: {0}, score: {1}, rank: {2}'.format(i, scores[i],
-                                                                   np.where(sorted == i)[0][0]))
-                f.write('action {}\n'.format(actions[i]))
+        #     f = open(file_path + '/actions_last_iter_t{}'.format(self.t), 'w')
+        #     sorted = scores.argsort()
+        #     for i in range(actions.shape[0]):
+        #         f.write('index: {0}, score: {1}, rank: {2}'.format(i, scores[i],
+        #                                                            np.where(sorted == i)[0][0]))
+        #         f.write('action {}\n'.format(actions[i]))
 
             # pdb.set_trace()
             # for i in range(self.K):

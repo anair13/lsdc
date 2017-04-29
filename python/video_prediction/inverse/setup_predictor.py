@@ -13,10 +13,10 @@ def setup_predictor(conf, gpu_id = 0):
     :return: function which predicts a batch of whole trajectories
     conditioned on the actions
     """
-    if gpu_id == None:
-        gpu_id = 0
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    print 'using CUDA_VISIBLE_DEVICES=', os.environ["CUDA_VISIBLE_DEVICES"]
+    # if gpu_id == None:
+    #     gpu_id = 0
+    # os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    # print 'using CUDA_VISIBLE_DEVICES=', os.environ["CUDA_VISIBLE_DEVICES"]
 
     # gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.9)
     # g_predictor = tf.Graph()
@@ -69,6 +69,7 @@ def setup_predictor(conf, gpu_id = 0):
         image_batch, action_batch = model.inputs
         feed_dict = {image_batch: input_images, action_batch: input_actions}
         out = f(feed_dict)
+        out = [out[r] for r in model.rollout_outputs]
 
         gen_distrib = out
         gen_images = None

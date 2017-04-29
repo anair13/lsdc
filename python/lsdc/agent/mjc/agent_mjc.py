@@ -124,7 +124,7 @@ class AgentMuJoCo(Agent):
                 self._model.data.ctrl = mj_U
                 self._model.step()    #simulate the model in mujoco
 
-            traj.touchdata[t, :] = accum_touch.squeeze()
+            # traj.touchdata[t, :] = accum_touch.squeeze()
             print 'accumulated force', t
             print accum_touch
 
