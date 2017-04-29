@@ -34,6 +34,25 @@ def init_weights(name, shape):
 def print_activations(t):
     print(t.op.name, ' ', t.get_shape().as_list())
 
+def make_network(x, network_size):
+    """Makes fully connected network with input x and given layer sizes.
+    Assume len(network_size) >= 2
+    """
+    input_size = network_size[0]
+    output_size = network_size.pop()
+    a = input_size
+    cur = x
+    i = 0
+    for a, b in zip(network_size, network_size[1:]):
+        W = init_weights("W" + str(i), [a, b])
+        B = init_weights("B" + str(i), [1, b])
+        cur = tf.nn.elu(tf.matmul(cur, W) + B)
+        i += 1
+    W = init_weights("W" + str(i), [b, output_size])
+    B = init_weights("B" + str(i), [1, output_size])
+    prediction = tf.matmul(cur, W) + B
+    return prediction
+
 def dict_to_string(params):
     excludes = ['data_dir']
     print params
@@ -98,7 +117,7 @@ class DynamicsModel(object):
 
         self.feat_activation = tf.sigmoid # bad default because of previous models
         if self.conf.get('featactivation') == "none":
-            self.feat_activation = None 
+            self.feat_activation = None
 
         transformed_image_batch = image_batch
         if self.conf.get('transform') == "meansub":
@@ -158,7 +177,7 @@ class DynamicsModel(object):
                 l = tf.reduce_mean(0.5 * x * x + tf.log(sigma))
                 self.forward_predictions.append(mu)
                 self.forward_predictions.append(sigma)
-            else:        
+            else:
                 f = self.forward_pred_network(feats, u, i != 0)
                 l = tf.reduce_mean(tf.nn.l2_loss(f2 - f))
                 self.forward_predictions.append(f)
@@ -378,14 +397,19 @@ class DynamicsModel(object):
     def action_pred_network(self, fs, reuse=False):
         """N is the discretization bins"""
         with tf.variable_scope('actionpred', reuse=reuse) as sc:
-            with slim.arg_scope([slim.fully_connected],
-                weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
-                weights_regularizer=slim.l2_regularizer(0.0005),
-                activation_fn=tf.nn.elu, reuse=reuse):
+            if self.conf.get("noslim"):
                 net = tf.concat(1, fs)
-                net = slim.fully_connected(net, 100, scope='fc_1')
-                net = slim.fully_connected(net, self.dsize * 2, scope='fc_2', activation_fn=None)
+                net = make_network(net, [self.fsize*self.context_frames, 100, 2*self.dsize])
                 return tf.reshape(net, [-1, 2, self.dsize])
+            else:
+                with slim.arg_scope([slim.fully_connected],
+                    weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
+                    weights_regularizer=slim.l2_regularizer(0.0005),
+                    activation_fn=tf.nn.elu, reuse=reuse):
+                    net = tf.concat(1, fs)
+                    net = slim.fully_connected(net, 100, scope='fc_1')
+                    net = slim.fully_connected(net, self.dsize * 2, scope='fc_2', activation_fn=None)
+                    return tf.reshape(net, [-1, 2, self.dsize])
 
     def forward_pred_network(self, fs, u, reuse=False):
         """
