@@ -32,7 +32,6 @@ def get_train_conf():
     conf['mu3'] = 1 # autoencoder weight
     conf['seq'] = 0 # to alternate training phase
     conf['autoencoder'] = "decode" # autoencoder mode, decode means do not pass gradients, None means no autoencoder at all
-    conf['featactivation'] = "none" # default sigmoid
     return conf
 
 if __name__ == "__main__":
