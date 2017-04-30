@@ -38,4 +38,4 @@ if __name__ == "__main__":
     new_conf = get_train_conf()
 
     model = transforming_dynamics_model.DynamicsModel(new_conf)
-    model.train(50000)
+    model.train(100000)
