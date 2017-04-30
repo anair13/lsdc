@@ -358,16 +358,22 @@ class DynamicsModel(object):
             with slim.arg_scope([slim.conv2d], padding='SAME',
                               # weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
                               weights_regularizer=slim.l2_regularizer(0.0005), reuse=reuse):
-                net = slim.conv2d(img, 32, [6, 6], 2, padding='SAME', scope='conv1')
-                net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
-                net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
-                if self.fsize % 32 == 0:
-                    net = slim.conv2d(net, self.fsize / 16, [3, 3], 2, padding='SAME', scope='conv4', activation_fn=self.feat_activation)
+                if self.conf.get("padding") == "valid":
+                    net = slim.conv2d(img, 32, [6, 6], 2, padding='VALID', scope='conv1')
+                    net = slim.conv2d(net, 32, [6, 6], 2, padding='VALID', scope='conv2')
+                    net = slim.conv2d(net, self.fsize / 16, [6, 6], 2, padding='VALID', scope='conv3', activation_fn=None)
                     net = tf.reshape(net, [-1, self.fsize])
                 else:
-                    net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv4')
-                    net = tf.reshape(net, [-1, 512])
-                    net = slim.fully_connected(net, self.fsize, scope='fc5', activation_fn=self.feat_activation)
+                    net = slim.conv2d(img, 32, [6, 6], 2, padding='SAME', scope='conv1')
+                    net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
+                    net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
+                    if self.fsize % 16 == 0:
+                        net = slim.conv2d(net, self.fsize / 16, [3, 3], 2, padding='SAME', scope='conv4', activation_fn=self.feat_activation)
+                        net = tf.reshape(net, [-1, self.fsize])
+                    else:
+                        net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv4')
+                        net = tf.reshape(net, [-1, 512])
+                        net = slim.fully_connected(net, self.fsize, scope='fc5', activation_fn=self.feat_activation)
         return net
 
     def decoder_network(self, f, reuse=False):
