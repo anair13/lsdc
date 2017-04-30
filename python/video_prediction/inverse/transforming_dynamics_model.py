@@ -185,9 +185,6 @@ class DynamicsModel(object):
 
         # compute accuracy and losses below
 
-        self.accuracy = tf.reduce_mean(tf.concat(1, self.correct_predictions))
-        self.feat_norm = tf.reduce_mean([tf.abs(f) for f in self.img_features])
-
         t_vars = tf.trainable_variables()
         self.dynamics_vars = [var for var in t_vars if not 'transformer' in var.name]
         self.transformer_vars = [var for var in t_vars if 'transformer' in var.name]
@@ -196,10 +193,14 @@ class DynamicsModel(object):
         mu1 = tf.constant(float(self.conf['mu1'])) if self.conf.get('mu1', None) is not None else tf.constant(0.0)
         mu2 = tf.constant(float(self.conf['mu2'])) if self.conf.get('mu2', None) is not None else tf.constant(0.0)
         mu3 = tf.constant(float(self.conf['mu3'])) if self.conf.get('mu3', None) is not None else tf.constant(0.0)
+        mu4 = tf.constant(float(self.conf['mu4'])) if self.conf.get('mu4', None) is not None else tf.constant(0.0)
+
+        self.accuracy = tf.reduce_mean(tf.concat(1, self.correct_predictions))
+        self.feat_norm_loss = tf.reduce_mean([tf.abs(f) for f in self.img_features])
         self.forward_loss = tf.add_n(self.forward_losses)
         self.inverse_loss = tf.add_n(self.action_loss)
         self.reconstruction_loss = tf.add_n(self.img_reconstruction_losses)
-        self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss + mu3 * self.reconstruction_loss
+        self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss + mu3 * self.reconstruction_loss + mu4 * self.feat_norm_loss
         self.transformer_loss = -self.inverse_loss + mu1 * tf.reduce_mean(self.t_masks)
 
         feats = [self.img_features[0] for _ in range(self.context_frames)]
@@ -215,7 +216,7 @@ class DynamicsModel(object):
         self.network.add_to_losses(loss)
         self.train_network = tf_utils.TFTrain(self.inputs, self.network, batchSz=self.conf['batch_size'], initLr=self.conf['learning_rate'], var_list=var_list)
         # self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.transformer_loss, self.accuracy], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'transformer_loss', 'accuracy'])
-        self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.reconstruction_loss, self.accuracy, self.feat_norm], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'reconstruction_loss', 'accuracy', 'feat_norm'])
+        self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.reconstruction_loss, self.accuracy, self.feat_norm_loss], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'reconstruction_loss', 'accuracy', 'feat_norm'])
 
         print "done with network setup"
 
@@ -360,9 +361,13 @@ class DynamicsModel(object):
                 net = slim.conv2d(img, 32, [6, 6], 2, padding='SAME', scope='conv1')
                 net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
                 net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
-                net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv4')
-                net = tf.reshape(net, [-1, 512])
-                net = slim.fully_connected(net, self.fsize, scope='fc5', activation_fn=self.feat_activation)
+                if self.fsize % 32 == 0:
+                    net = slim.conv2d(net, self.fsize / 16, [3, 3], 2, padding='SAME', scope='conv4', activation_fn=self.feat_activation)
+                    net = tf.reshape(net, [-1, self.fsize])
+                else:
+                    net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv4')
+                    net = tf.reshape(net, [-1, 512])
+                    net = slim.fully_connected(net, self.fsize, scope='fc5', activation_fn=self.feat_activation)
         return net
 
     def decoder_network(self, f, reuse=False):

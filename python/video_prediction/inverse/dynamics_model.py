@@ -117,12 +117,16 @@ class DynamicsModel(object):
         self.conf = train_conf
         self.sess = None
 
-        # image_batch  = tf.placeholder("float", [None, 15, 64, 64, 3])
-        # action_batch = tf.placeholder("float", [None, 15, 2])
-        # self.inputs = list(read_tf_record.build_tfrecord_input(self.conf, training=True))
+        image_batch  = tf.placeholder("float", [None, 15, 64, 64, 3])
+        raw_action_batch = tf.placeholder("float", [None, 15, 2])
+        self.inputs = [image_batch, raw_action_batch]
 
-        self.inputs = list(read_tf_record.build_tfrecord_input(self.conf, training=True))
-        image_batch, raw_action_batch, state_batch = self.inputs
+        train_conf = self.conf.copy()
+        train_conf["data_dir"] += '/train'
+        self.train_input_readers = list(read_tf_record.build_tfrecord_input(train_conf, training=True))
+        test_conf = self.conf.copy()
+        test_conf["data_dir"] += '/test'
+        self.test_input_readers = list(read_tf_record.build_tfrecord_input(test_conf, training=True))
 
         D = lambda x: discretize_actions(x, self.conf['discretize'])
         action_batch = tf.py_func(D, [raw_action_batch], tf.float32)
@@ -163,11 +167,13 @@ class DynamicsModel(object):
         self.sess.run(tf.initialize_all_variables())
 
     def train_batch(self, inputs, batch_size, isTrain):
-        # image_batch, action_batch, state_batch, object_pos_batch = inputs
-        # image_data, action_data, state_data, object_pos = self.sess.run([image_batch, action_batch, state_batch, object_pos_batch])
-        # feed_dict = {image_batch: image_data, action_batch: action_data}
-        # return feed_dict
-        return {}
+        readers = self.train_input_readers if isTrain else self.test_input_readers
+        image_batch, raw_action_batch, state_batch = readers
+        image_data, action_data, state_data = self.sess.run([image_batch, raw_action_batch, state_batch])
+
+        image_batch, action_batch = inputs
+        feed_dict = {image_batch: image_data, action_batch: action_data}
+        return feed_dict
 
     def train(self, max_iters = 100000, use_existing = True):
         self.init_sess()
