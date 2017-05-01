@@ -160,7 +160,6 @@ class DynamicsModel(object):
             f1 = self.img_features[i]
             f2 = self.img_features[i+1]
 
-            feats.pop(0)
             feats.append(f2)
             u = tf.reshape(action_batch[:, i, :, :], [-1, 2, self.dsize])
 
@@ -182,6 +181,8 @@ class DynamicsModel(object):
                 l = tf.reduce_mean(tf.nn.l2_loss(f2 - f))
                 self.forward_predictions.append(f)
             self.forward_losses.append(l)
+
+            feats.pop(0)
 
         # compute accuracy and losses below
 
@@ -260,11 +261,12 @@ class DynamicsModel(object):
             sess.run([apply_grad_op])
 
     def validation_summary(self, output):
-        """Take the output of run() and condense into some text"""
-        accuracies = np.array([o[self.accuracy] for o in output])
-        accuracies = np.array([o[self.forward_loss] for o in output])
-        accuracies = np.array([o[self.inverse_loss] for o in output])
-
+        """Take the output of run() and condense summary values into a dictionary"""
+        ret = {}
+        for var, name in zip(self.tracking_vars, self.tracking_names):
+            values = np.array([o[var] for o in output])
+            ret[name] = np.mean(values)
+        return ret
 
     def run(self, dataset="test", batches=1, i = None, sess=None, f=None):
         """Return batches*batch_size examples from the dataset ("train" or "val")
