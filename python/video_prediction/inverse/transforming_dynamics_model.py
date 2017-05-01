@@ -160,10 +160,9 @@ class DynamicsModel(object):
             f1 = self.img_features[i]
             f2 = self.img_features[i+1]
 
-            feats.append(f2)
             u = tf.reshape(action_batch[:, i, :, :], [-1, 2, self.dsize])
 
-            a = self.action_pred_network(feats, i != 0)
+            a = self.action_pred_network(feats + [f2], i != 0)
             l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, u))
             c = tf.equal(tf.argmax(a, 2), tf.argmax(u, 2))
             self.correct_predictions.append(tf.cast(c, tf.float32))
@@ -183,6 +182,7 @@ class DynamicsModel(object):
             self.forward_losses.append(l)
 
             feats.pop(0)
+            feats.append(f2)
 
         # compute accuracy and losses below
 
