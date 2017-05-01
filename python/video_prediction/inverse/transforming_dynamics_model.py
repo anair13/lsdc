@@ -448,8 +448,8 @@ class DynamicsModel(object):
             with slim.arg_scope([slim.conv2d], padding='SAME',
                               # weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
                               weights_regularizer=slim.l2_regularizer(0.0005), reuse=reuse):
-                net = slim.fully_connected(f, 512, scope='fc5')
-                net = tf.reshape(net, [-1, 4, 4, 32])
+                # net = slim.fully_connected(f, 512, scope='fc5')
+                net = tf.reshape(f, [-1, 4, 4, self.fsize / 16])
                 net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv1')
                 net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
                 net = slim.conv2d_transpose(net, 32, [6, 6], 2, padding='SAME', scope='conv3')

@@ -8,7 +8,7 @@ import collections
 import tensorflow as tf
 
 def get_train_conf():
-    conf = transforming_dynamics_model.DEFAULT_CONF
+    conf = transforming_dynamics_model.DEFAULT_CONF.copy()
     conf['fsize'] = 32
     conf['mu2'] = 1e-6 # forward weight
     conf['mu3'] = 1e-3 # autoencoder weight
