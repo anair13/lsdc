@@ -10,6 +10,7 @@ import copy
 import tensorflow as tf
 # from path import project_dir, tf_data_dir
 import cv2
+import csv
 
 from path import project_dir, tf_data_dir
 
@@ -20,6 +21,15 @@ from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import embedding_ops
 
 import discretize
+import datetime
+
+import logging
+logger = logging.getLogger('myapp')
+hdlr = logging.FileHandler('experiments.log')
+formatter = logging.Formatter('%(asctime)s,%(message)s')
+hdlr.setFormatter(formatter)
+logger.addHandler(hdlr)
+logger.setLevel(logging.ERROR)
 
 # import hack
 import sys
@@ -27,6 +37,35 @@ import os
 HERE_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(HERE_DIR+"/..")
 from utils_vpred import create_gif
+
+def get_default_conf():
+    DATA_DIR = '/home/ashvin/lsdc/pushing_data/finer_temporal_resolution_substep10'
+    conf = collections.OrderedDict()
+    conf['experiment_name'] = 'fullcontext'
+    conf['transform'] = 'none'
+    conf['data'] = 'ftrs'
+    conf['data_dir'] = DATA_DIR       # 'directory containing data.'
+    conf['sequence_length'] = 15      # 'sequence length including context frames.'
+    conf['skip_frame'] = 2            # 'use ever i-th frame to increase prediction horizon'
+    conf['context_frames'] = 2        # of frames before predictions.'
+    conf['use_state'] = 1             #'Whether or not to give the state+action to the model'
+    conf['train_val_split'] = 1.0    #'The percentage of files to use for the training set vs. the validation set.'
+    conf['batch_size'] = 32           #'batch size for training'
+    conf['learning_rate'] = 0.001      #'the base learning rate of the generator'
+    conf['visualize'] = ''            #'load model from which to generate visualizations
+    conf['file_visual'] = ''          # datafile used for making visualizations
+    conf['discretize'] = 20
+    conf['fsize'] = 128
+    conf['masks'] = 0
+    conf['run'] = 0
+    conf['mu1'] = 0 # transforming mask regularizing weight
+    conf['mu2'] = 0 # forward weight
+    conf['mu3'] = 1 # autoencoder weight
+    conf['seq'] = 0 # to alternate training phase
+    conf['autoencoder'] = "decode" # autoencoder mode, decode means do not pass gradients, None means no autoencoder at all
+    conf['featactivation'] = "none" # default sigmoid
+    conf['padding'] = "valid"
+    return conf
 
 def init_weights(name, shape):
     return tf.get_variable(name, shape=shape, initializer=tf.random_normal_initializer(0, 0.01))
@@ -252,6 +291,9 @@ class DynamicsModel(object):
 
         self.save_rollout_gifs()
 
+        val_output = self.run(batches=1)
+        logger.error(self.validation_summary(val_output))
+
     def train_transformer(self):
         """trash"""
         t_iter_  = tf.Variable(0, name='t_iteration')
@@ -262,11 +304,19 @@ class DynamicsModel(object):
 
     def validation_summary(self, output):
         """Take the output of run() and condense summary values into a dictionary"""
-        ret = {}
+        ret = []
+
+        # some logistical notes
+        ret.append("filename")
+        ret.append(sys.argv[0])
+        ret.append("confname")
+        ret.append(self.name)
+
         for var, name in zip(self.tracking_vars, self.tracking_names):
             values = np.array([o[var] for o in output])
-            ret[name] = np.mean(values)
-        return ret
+            ret.append(name)
+            ret.append(str(np.mean(values)))
+        return ",".join(ret)
 
     def run(self, dataset="test", batches=1, i = None, sess=None, f=None):
         """Return batches*batch_size examples from the dataset ("train" or "val")
@@ -296,7 +346,7 @@ class DynamicsModel(object):
             if i and not restore: # model requested but not found
                 return None
 
-        query = self.action_preds + self.inputs + self.t_masks + self.img_reconstructions + self.forward_predictions + self.img_features
+        query = self.action_preds + self.inputs + self.t_masks + self.img_reconstructions + self.forward_predictions + self.img_features + self.tracking_vars
         def f(feed_dict):
             result = self.sess.run(query, feed_dict)
             d = collections.OrderedDict()
