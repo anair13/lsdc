@@ -216,7 +216,9 @@ class DynamicsModel(object):
         self.network.add_to_losses(loss)
         self.train_network = tf_utils.TFTrain(self.inputs, self.network, batchSz=self.conf['batch_size'], initLr=self.conf['learning_rate'], var_list=var_list)
         # self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.transformer_loss, self.accuracy], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'transformer_loss', 'accuracy'])
-        self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.reconstruction_loss, self.accuracy, self.feat_norm_loss], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'reconstruction_loss', 'accuracy', 'feat_norm'])
+        self.tracking_vars = [self.dynamics_loss, self.inverse_loss, self.forward_loss, self.reconstruction_loss, self.accuracy, self.feat_norm_loss]
+        self.tracking_names = ['dynamics_loss', 'inverse_loss', 'forward_loss', 'reconstruction_loss', 'accuracy', 'feat_norm']
+        self.train_network.add_loss_summaries(self.tracking_vars, self.tracking_names)
 
         print "done with network setup"
 
@@ -256,6 +258,13 @@ class DynamicsModel(object):
 
         for i in range(1000):
             sess.run([apply_grad_op])
+
+    def validation_summary(self, output):
+        """Take the output of run() and condense into some text"""
+        accuracies = np.array([o[self.accuracy] for o in output])
+        accuracies = np.array([o[self.forward_loss] for o in output])
+        accuracies = np.array([o[self.inverse_loss] for o in output])
+
 
     def run(self, dataset="test", batches=1, i = None, sess=None, f=None):
         """Return batches*batch_size examples from the dataset ("train" or "val")
