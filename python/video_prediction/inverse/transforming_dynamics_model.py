@@ -161,7 +161,7 @@ class DynamicsModel(object):
             f2 = self.img_features[i+1]
 
             feats.pop(0)
-            feats.append(f1)
+            feats.append(f2)
             u = tf.reshape(action_batch[:, i, :, :], [-1, 2, self.dsize])
 
             a = self.action_pred_network(feats, i != 0)
