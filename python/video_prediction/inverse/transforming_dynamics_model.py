@@ -41,8 +41,9 @@ from utils_vpred import create_gif
 def get_default_conf():
     DATA_DIR = '/home/ashvin/lsdc/pushing_data/finer_temporal_resolution_substep10'
     conf = collections.OrderedDict()
-    conf['experiment_name'] = 'fullcontext'
-    conf['transform'] = 'none'
+    conf['default'] = True
+    conf['experiment_name'] = 'forward'
+    conf['transform'] = 'meansub'
     conf['data'] = 'ftrs'
     conf['data_dir'] = DATA_DIR       # 'directory containing data.'
     conf['sequence_length'] = 15      # 'sequence length including context frames.'
@@ -61,11 +62,14 @@ def get_default_conf():
     conf['mu1'] = 0 # transforming mask regularizing weight
     conf['mu2'] = 0 # forward weight
     conf['mu3'] = 1 # autoencoder weight
+    conf['mu4'] = 0 # feature 1-norm loss weight
     conf['seq'] = 0 # to alternate training phase
     conf['autoencoder'] = "decode" # autoencoder mode, decode means do not pass gradients, None means no autoencoder at all
+    conf['forwardloss'] = "gaussian"
     conf['featactivation'] = "none" # default sigmoid
     conf['padding'] = "valid"
     return conf
+DEFAULT_CONF = get_default_conf()
 
 def init_weights(name, shape):
     return tf.get_variable(name, shape=shape, initializer=tf.random_normal_initializer(0, 0.01))
@@ -98,6 +102,8 @@ def dict_to_string(params):
     name = ""
     for key in params:
         if key in excludes:
+            continue
+        if params.get('default') and params.get(key) == DEFAULT_CONF.get(key):
             continue
         if params[key] is not None:
             name = name + str(key) + "_" + str(params[key]) + "/"
