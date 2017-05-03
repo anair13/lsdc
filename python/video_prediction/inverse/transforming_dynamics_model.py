@@ -201,6 +201,9 @@ class DynamicsModel(object):
             if self.tracking_tensors:
                 self.data_losses[self.sample] = self.tracking_tensors
                 self.weights = math_utils.softmax(self.mining_temp * self.data_losses)
+                # s = sorted(self.weights)
+                # print s.shape
+                # print s[0], s[8000], s[16000], s[24000], s[-1]
             self.sample = np.random.choice(self.data_size, batch_size, p=self.weights)
             image_data = self.all_image_data[self.sample, :, :, :, :]
             action_data = self.all_action_data[self.sample, :, :]
@@ -358,6 +361,7 @@ class DynamicsModel(object):
             image_data, action_data, state_data = self.sess.run([image_batch, raw_action_batch, state_batch])
             self.all_image_data[start:end, :, :, :, :] = image_data
             self.all_action_data[start:end, :, :] = action_data
+        print "loaded data, size", self.data_size
 
     ##### NETWORK CONSTRUCTION FUNCTIONS
 
