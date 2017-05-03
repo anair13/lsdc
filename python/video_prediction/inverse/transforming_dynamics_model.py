@@ -22,6 +22,7 @@ from tensorflow.python.ops import embedding_ops
 
 import discretize
 import datetime
+import math_utils
 
 import logging
 logger = logging.getLogger('myapp')
@@ -37,88 +38,6 @@ import os
 HERE_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(HERE_DIR+"/..")
 from utils_vpred import create_gif
-
-def get_default_conf():
-    DATA_DIR = '/home/ashvin/lsdc/pushing_data/finer_temporal_resolution_substep10'
-    conf = collections.OrderedDict()
-    conf['default'] = True
-    conf['experiment_name'] = 'forward'
-    conf['transform'] = 'meansub'
-    conf['data'] = 'ftrs'
-    conf['data_dir'] = DATA_DIR       # 'directory containing data.'
-    conf['sequence_length'] = 15      # 'sequence length including context frames.'
-    conf['skip_frame'] = 2            # 'use ever i-th frame to increase prediction horizon'
-    conf['context_frames'] = 2        # of frames before predictions.'
-    conf['use_state'] = 1             #'Whether or not to give the state+action to the model'
-    conf['train_val_split'] = 1.0    #'The percentage of files to use for the training set vs. the validation set.'
-    conf['batch_size'] = 32           #'batch size for training'
-    conf['learning_rate'] = 0.001      #'the base learning rate of the generator'
-    conf['visualize'] = ''            #'load model from which to generate visualizations
-    conf['file_visual'] = ''          # datafile used for making visualizations
-    conf['discretize'] = 20
-    conf['fsize'] = 128
-    conf['masks'] = 0
-    conf['run'] = 0
-    conf['mu1'] = 0 # transforming mask regularizing weight
-    conf['mu2'] = 0 # forward weight
-    conf['mu3'] = 1 # autoencoder weight
-    conf['mu4'] = 0 # feature 1-norm loss weight
-    conf['seq'] = 0 # to alternate training phase
-    conf['autoencoder'] = "decode" # autoencoder mode, decode means do not pass gradients, None means no autoencoder at all
-    conf['forwardloss'] = "gaussian"
-    conf['featactivation'] = "none" # default sigmoid
-    conf['padding'] = "valid"
-    return conf
-DEFAULT_CONF = get_default_conf()
-
-def init_weights(name, shape):
-    return tf.get_variable(name, shape=shape, initializer=tf.random_normal_initializer(0, 0.01))
-
-def print_activations(t):
-    print(t.op.name, ' ', t.get_shape().as_list())
-
-def make_network(x, network_size):
-    """Makes fully connected network with input x and given layer sizes.
-    Assume len(network_size) >= 2
-    """
-    input_size = network_size[0]
-    output_size = network_size.pop()
-    a = input_size
-    cur = x
-    i = 0
-    for a, b in zip(network_size, network_size[1:]):
-        W = init_weights("W" + str(i), [a, b])
-        B = init_weights("B" + str(i), [1, b])
-        cur = tf.nn.elu(tf.matmul(cur, W) + B)
-        i += 1
-    W = init_weights("W" + str(i), [b, output_size])
-    B = init_weights("B" + str(i), [1, output_size])
-    prediction = tf.matmul(cur, W) + B
-    return prediction
-
-def dict_to_string(params):
-    excludes = ['data_dir']
-    print params
-    name = ""
-    for key in params:
-        if key in excludes:
-            continue
-        if params.get('default') and params.get(key) == DEFAULT_CONF.get(key):
-            continue
-        if params[key] is not None:
-            name = name + str(key) + "_" + str(params[key]) + "/"
-    return name[:-1]
-
-def discretize_actions(x, N=20):
-    batches = x.shape[0]
-    frames = x.shape[1]
-    actiondim = x.shape[2]
-    X = np.zeros((batches, frames, actiondim, N))
-    for b in range(batches):
-        for f in range(frames):
-            for a in range(actiondim):
-                X[b, f, a, :] = discretize.one_hot_encode(x[b, f, a], -10, 10, N)
-    return np.float32(X)
 
 class DynamicsModel(object):
     """An inverse model I with a adversarial transformer T that tries to hide information
@@ -208,7 +127,7 @@ class DynamicsModel(object):
             u = tf.reshape(action_batch[:, i, :, :], [-1, 2, self.dsize])
 
             a = self.action_pred_network(feats + [f2], i != 0)
-            l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, u))
+            l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, u), 1)
             c = tf.equal(tf.argmax(a, 2), tf.argmax(u, 2))
             self.correct_predictions.append(tf.cast(c, tf.float32))
             self.action_preds.append(a)
@@ -217,12 +136,13 @@ class DynamicsModel(object):
             if self.conf.get('forwardloss') == "gaussian":
                 mu, sigma = self.forward_gaussian_pred_network(feats, u, i != 0)
                 x = (f2 - mu) / sigma
-                l = tf.reduce_mean(0.5 * x * x + tf.log(sigma))
+                l = tf.reduce_mean(0.5 * x * x + tf.log(sigma), 1)
                 self.forward_predictions.append(mu)
                 self.forward_predictions.append(sigma)
             else:
                 f = self.forward_pred_network(feats, u, i != 0)
-                l = tf.reduce_mean(tf.nn.l2_loss(f2 - f))
+                e = f2 - f
+                l = tf.reduce_sum(e * e, 1)
                 self.forward_predictions.append(f)
             self.forward_losses.append(l)
 
@@ -241,10 +161,13 @@ class DynamicsModel(object):
         mu3 = tf.constant(float(self.conf['mu3'])) if self.conf.get('mu3', None) is not None else tf.constant(0.0)
         mu4 = tf.constant(float(self.conf['mu4'])) if self.conf.get('mu4', None) is not None else tf.constant(0.0)
 
+        self.forward_loss_batch = tf.add_n(self.forward_losses)
+        self.inverse_loss_batch = tf.add_n(self.action_loss)
+        self.dynamics_loss_batch = self.inverse_loss_batch + mu2 * self.forward_loss_batch
         self.accuracy = tf.reduce_mean(tf.concat(1, self.correct_predictions))
         self.feat_norm_loss = tf.reduce_mean([tf.abs(f) for f in self.img_features])
-        self.forward_loss = tf.add_n(self.forward_losses)
-        self.inverse_loss = tf.add_n(self.action_loss)
+        self.forward_loss = tf.reduce_mean(self.forward_loss_batch)
+        self.inverse_loss = tf.reduce_mean(self.inverse_loss_batch)
         self.reconstruction_loss = tf.add_n(self.img_reconstruction_losses)
         self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss + mu3 * self.reconstruction_loss + mu4 * self.feat_norm_loss
         self.transformer_loss = -self.inverse_loss + mu1 * tf.reduce_mean(self.t_masks)
@@ -274,10 +197,18 @@ class DynamicsModel(object):
         self.sess.run(tf.initialize_all_variables())
 
     def train_batch(self, inputs, batch_size, isTrain):
-        readers = self.train_input_readers if isTrain else self.test_input_readers
-        image_batch, raw_action_batch, state_batch = readers
+        if self.conf.get("loadalldata") and isTrain:
+            if self.tracking_tensors:
+                self.data_losses[self.sample] = self.tracking_tensors
+                self.weights = math_utils.softmax(self.mining_temp * self.data_losses)
+            self.sample = np.random.choice(self.data_size, batch_size, p=self.weights)
+            image_data = self.all_image_data[self.sample, :, :, :, :]
+            action_data = self.all_action_data[self.sample, :, :]
+        else:
+            readers = self.train_input_readers if isTrain else self.test_input_readers
+            image_batch, raw_action_batch, state_batch = readers
 
-        image_data, action_data, state_data = self.sess.run([image_batch, raw_action_batch, state_batch])
+            image_data, action_data, state_data = self.sess.run([image_batch, raw_action_batch, state_batch])
         image_batch, action_batch = inputs
         feed_dict = {image_batch: image_data, action_batch: action_data}
         return feed_dict
@@ -290,10 +221,17 @@ class DynamicsModel(object):
             init_name = None
 
         self.init_sess()
+
+        loadalldata = self.conf.get("loadalldata")
+        if loadalldata:
+            self.load_all_training_data(loadalldata)
+            self.tracking_tensors = None
+            self.mining_temp = self.conf.get("miningtemp")
+
         self.train_network.maxIter_ = max_iters
         self.train_network.dispIter_ = 100
         self.train_network.saveIter_ = 1000
-        self.train_network.train(self.train_batch, self.train_batch, use_existing=use_existing, sess=self.sess, init_path=init_name)
+        self.train_network.train(self.train_batch, self.train_batch, use_existing=use_existing, sess=self.sess, init_path=init_name, model=self, tracking_tensors=[self.dynamics_loss_batch])
 
         self.save_rollout_gifs()
 
@@ -407,6 +345,19 @@ class DynamicsModel(object):
                 ims.append(im)
             create_gif.npy_to_gif(ims, folder + '/' + str(b))
 
+    def load_all_training_data(self, batches):
+        image_batch, raw_action_batch, state_batch = self.train_input_readers
+        self.data_size = batches * self.batch_size
+        self.all_image_data = np.zeros((self.data_size, self.sequence_length, 64, 64, 3))
+        self.all_action_data = np.zeros((self.data_size, self.sequence_length, 2))
+        self.weights = np.ones((self.data_size)) / float(self.data_size)
+        self.data_losses = np.ones((self.data_size)) * 100
+        for i in range(batches):
+            start = self.batch_size * i
+            end = start + self.batch_size
+            image_data, action_data, state_data = self.sess.run([image_batch, raw_action_batch, state_batch])
+            self.all_image_data[start:end, :, :, :, :] = image_data
+            self.all_action_data[start:end, :, :] = action_data
 
     ##### NETWORK CONSTRUCTION FUNCTIONS
 
@@ -555,3 +506,97 @@ class DynamicsModel(object):
                 f = outputs[i]
                 reconstructions.append(self.decoder_network(f, True))
         return outputs, reconstructions
+
+
+def get_default_conf():
+    DATA_DIR = '/home/ashvin/lsdc/pushing_data/finer_temporal_resolution_substep10'
+    conf = collections.OrderedDict()
+    conf['default'] = True
+    conf['experiment_name'] = 'forward'
+    conf['transform'] = 'meansub'
+    conf['data'] = 'ftrs'
+    conf['data_dir'] = DATA_DIR       # 'directory containing data.'
+    conf['sequence_length'] = 15      # 'sequence length including context frames.'
+    conf['skip_frame'] = 2            # 'use ever i-th frame to increase prediction horizon'
+    conf['context_frames'] = 2        # of frames before predictions.'
+    conf['use_state'] = 1             #'Whether or not to give the state+action to the model'
+    conf['train_val_split'] = 1.0    #'The percentage of files to use for the training set vs. the validation set.'
+    conf['batch_size'] = 32           #'batch size for training'
+    conf['learning_rate'] = 0.001      #'the base learning rate of the generator'
+    conf['visualize'] = ''            #'load model from which to generate visualizations
+    conf['file_visual'] = ''          # datafile used for making visualizations
+    conf['discretize'] = 20
+    conf['fsize'] = 128
+    conf['masks'] = 0
+    conf['run'] = 0
+    conf['mu1'] = 0 # transforming mask regularizing weight
+    conf['mu2'] = 0 # forward weight
+    conf['mu3'] = 1 # autoencoder weight
+    conf['mu4'] = 0 # feature 1-norm loss weight
+    conf['seq'] = 0 # to alternate training phase
+    conf['autoencoder'] = "decode" # autoencoder mode, decode means do not pass gradients, None means no autoencoder at all
+    conf['forwardloss'] = "gaussian"
+    conf['featactivation'] = "none" # default sigmoid
+    conf['padding'] = "valid"
+    conf['loadalldata'] = 0
+    conf['miningtemp'] = 0
+    return conf
+
+DEFAULT_CONF = get_default_conf()
+
+def get_conf(**kwargs):
+    conf = DEFAULT_CONF.copy()
+    for arg in kwargs:
+        assert arg in conf
+        conf[arg] = kwargs[arg]
+    return conf
+
+def init_weights(name, shape):
+    return tf.get_variable(name, shape=shape, initializer=tf.random_normal_initializer(0, 0.01))
+
+def print_activations(t):
+    print(t.op.name, ' ', t.get_shape().as_list())
+
+def make_network(x, network_size):
+    """Makes fully connected network with input x and given layer sizes.
+    Assume len(network_size) >= 2
+    """
+    input_size = network_size[0]
+    output_size = network_size.pop()
+    a = input_size
+    cur = x
+    i = 0
+    for a, b in zip(network_size, network_size[1:]):
+        W = init_weights("W" + str(i), [a, b])
+        B = init_weights("B" + str(i), [1, b])
+        cur = tf.nn.elu(tf.matmul(cur, W) + B)
+        i += 1
+    W = init_weights("W" + str(i), [b, output_size])
+    B = init_weights("B" + str(i), [1, output_size])
+    prediction = tf.matmul(cur, W) + B
+    return prediction
+
+def dict_to_string(params):
+    excludes = ['data_dir']
+    print params
+    name = ""
+    for key in params:
+        if key in excludes:
+            continue
+        if params.get('default') and params.get(key) == DEFAULT_CONF.get(key):
+            continue
+        if params[key] is not None:
+            name = name + str(key) + "_" + str(params[key]) + "/"
+    return name[:-1]
+
+def discretize_actions(x, N=20):
+    batches = x.shape[0]
+    frames = x.shape[1]
+    actiondim = x.shape[2]
+    X = np.zeros((batches, frames, actiondim, N))
+    for b in range(batches):
+        for f in range(frames):
+            for a in range(actiondim):
+                X[b, f, a, :] = discretize.one_hot_encode(x[b, f, a], -10, 10, N)
+    return np.float32(X)
+
