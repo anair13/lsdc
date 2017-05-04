@@ -37,7 +37,7 @@ import os
 HERE_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(HERE_DIR+"/..")
 from utils_vpred import create_gif
-import read_tf_record
+import read_tf_record_mine as read_tf_record
 
 class DynamicsModel(object):
     """An inverse model I with a adversarial transformer T that tries to hide information
@@ -55,11 +55,11 @@ class DynamicsModel(object):
         self.conf = train_conf
         self.sess = None
 
-        image_batch  = tf.placeholder("float", [None, 15, 64, 64, 3])
-        raw_action_batch = tf.placeholder("float", [None, 15, 2])
-        touch_batch = tf.placeholder("float", [None, 15, 20])
-        state_batch = tf.placeholder("float", [None, 15, 4])
-        self.inputs = [image_batch, raw_action_batch, state_batch]
+        self.image_batch  = tf.placeholder("float", [None, 15, 64, 64, 3])
+        self.raw_action_batch = tf.placeholder("float", [None, 15, 2])
+        self.touch_batch = tf.placeholder("float", [None, 15, 20])
+        self.state_batch = tf.placeholder("float", [None, 15, 4])
+        self.inputs = [self.image_batch, self.raw_action_batch, self.state_batch]
         if self.conf.get("touch"):
             self.inputs += [touch_batch]
 
@@ -87,7 +87,7 @@ class DynamicsModel(object):
         if self.conf.get('featactivation') == "none":
             self.feat_activation = None
 
-        transformed_image_batch = image_batch
+        transformed_image_batch = self.image_batch
         if self.conf.get('transform') == "meansub":
             transformed_image_batch = transformed_image_batch - self.get_image_mean_tensor()
 
@@ -350,8 +350,8 @@ class DynamicsModel(object):
     def save_rollout_gifs(self):
         f = self.get_rollout_f(imgs=True)
         result = self.run('test', f=f)[0]
-        reconstructions = result.values()[16:]
-        image_data, action_data = result.values()[:2]
+        reconstructions = [result[r] for r in self.rollout_reconstructions]
+        image_data, action_data = result[self.image_batch, self.action_batch]
 
         folder = self.network.outputDir_
 
