@@ -228,9 +228,6 @@ class DynamicsModel(object):
         else:
             readers = self.train_input_readers if isTrain else self.test_input_readers
             data = self.sess.run(readers)
-            print len(data)
-            # print data
-            # print len(self.inputs)
             feed_dict = {}
             for i, inp in enumerate(self.inputs):
                 feed_dict[inp] = data[i]
