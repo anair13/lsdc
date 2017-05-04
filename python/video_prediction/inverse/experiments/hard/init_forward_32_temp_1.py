@@ -8,6 +8,11 @@ import collections
 import tensorflow as tf
 
 if __name__ == "__main__":
+    init_conf = transforming_dynamics_model.get_conf(
+        fsize=32,
+        mu2=1e-6,
+    )
+
     new_conf = transforming_dynamics_model.get_conf(
         experiment_name="mining",
         fsize=32,
@@ -19,4 +24,4 @@ if __name__ == "__main__":
     )
 
     model = transforming_dynamics_model.DynamicsModel(new_conf)
-    model.train(10000, False)
+    model.train(10000, False, init_conf=(50000, init_conf))
