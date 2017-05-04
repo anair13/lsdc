@@ -351,7 +351,7 @@ class DynamicsModel(object):
         f = self.get_rollout_f(imgs=True)
         result = self.run('test', f=f)[0]
         reconstructions = [result[r] for r in self.rollout_reconstructions]
-        image_data, action_data = result[self.image_batch], result[self.action_batch]
+        image_data, action_data = result[self.image_batch], result[self.raw_action_batch]
 
         folder = self.network.outputDir_
 
