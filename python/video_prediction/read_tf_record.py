@@ -82,7 +82,7 @@ def build_tfrecord_input(conf, training=True, gtruth_pred = False):
             if conf['use_object_pos']:
                 features[object_pos_name] = tf.FixedLenFeature([OBJECT_POS_DIM], tf.float32)
 
-        if 'touch' in conf:
+        if conf['touch']:
             touchdata_name = 'touchdata/' + str(i)
             TOUCH_DIM = 20
             features[touchdata_name] =  tf.FixedLenFeature([TOUCH_DIM], tf.float32)
@@ -90,19 +90,19 @@ def build_tfrecord_input(conf, training=True, gtruth_pred = False):
         features = tf.parse_single_example(serialized_example, features=features)
 
         if gtruth_pred:
-            predimage_seq.append(resize_im( features, image_pred_name))
-            gtruthimage_seq.append(resize_im( features, image_gtruth_name))
+            predimage_seq.append(resize_im( features, image_pred_name, conf))
+            gtruthimage_seq.append(resize_im( features, image_gtruth_name, conf))
 
         else:
 
-            image_seq.append(resize_im( features, image_name))
+            image_seq.append(resize_im( features, image_name, conf))
 
             state = tf.reshape(features[state_name], shape=[1, STATE_DIM])
             state_seq.append(state)
             action = tf.reshape(features[action_name], shape=[1, ACION_DIM])
             action_seq.append(action)
 
-            if 'touch' in conf:
+            if conf['touch']:
                 touchdata = tf.reshape(features[touchdata_name], shape=[1, TOUCH_DIM])
                 touch_seq.append(touchdata)
 
@@ -135,7 +135,8 @@ def build_tfrecord_input(conf, training=True, gtruth_pred = False):
 
         state_seq = tf.concat(0, state_seq)
         action_seq = tf.concat(0, action_seq)
-        touch_seq = tf.concat(0, touch_seq)
+        if conf['touch']:
+            touch_seq = tf.concat(0, touch_seq)
 
         if 'use_object_pos' in conf.keys():
             if conf['use_object_pos']:
@@ -162,7 +163,7 @@ def build_tfrecord_input(conf, training=True, gtruth_pred = False):
             return image_batch, action_batch, state_batch
 
 
-def resize_im(features, image_pred_name):
+def resize_im(features, image_pred_name, conf):
     COLOR_CHAN = 3
     if '128x128' in conf:
         ORIGINAL_WIDTH = 128

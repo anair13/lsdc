@@ -1,4 +1,3 @@
-import read_tf_record
 # todo: this import has to be above tf_utils???
 
 import tf_utils
@@ -38,6 +37,7 @@ import os
 HERE_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(HERE_DIR+"/..")
 from utils_vpred import create_gif
+import read_tf_record
 
 class DynamicsModel(object):
     """An inverse model I with a adversarial transformer T that tries to hide information
@@ -119,10 +119,12 @@ class DynamicsModel(object):
                 self.img_reconstruction_losses.append(l)
 
         self.action_preds = []
-        self.action_loss = []
+        self.action_losses = []
         self.correct_predictions = []
         self.forward_predictions = []
         self.forward_losses = []
+        self.touch_preds = []
+        self.touch_losses = []
         feats = [self.img_features[0] for _ in range(self.context_frames)]
         for i in range(self.conf['sequence_length'] - 1):
             f1 = self.img_features[i]
@@ -135,7 +137,13 @@ class DynamicsModel(object):
             c = tf.equal(tf.argmax(a, 2), tf.argmax(u, 2))
             self.correct_predictions.append(tf.cast(c, tf.float32))
             self.action_preds.append(a)
-            self.action_loss.append(l)
+            self.action_losses.append(l)
+
+            if self.conf.get("touch"):
+                t = self.touch_pred_network(feats + [f2], i != 0)
+                l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(t, u), 1)
+                self.touch_preds.append(t)
+                self.touch_losses.append(l)
 
             if self.conf.get('forwardloss') == "gaussian":
                 mu, sigma = self.forward_gaussian_pred_network(feats, u, i != 0)
@@ -164,16 +172,19 @@ class DynamicsModel(object):
         mu2 = tf.constant(float(self.conf['mu2'])) if self.conf.get('mu2', None) is not None else tf.constant(0.0)
         mu3 = tf.constant(float(self.conf['mu3'])) if self.conf.get('mu3', None) is not None else tf.constant(0.0)
         mu4 = tf.constant(float(self.conf['mu4'])) if self.conf.get('mu4', None) is not None else tf.constant(0.0)
+        mu5 = tf.constant(float(self.conf['mu5'])) if self.conf.get('mu5', None) is not None else tf.constant(0.0)
 
-        self.forward_loss_batch = tf.add_n(self.forward_losses)
-        self.inverse_loss_batch = tf.add_n(self.action_loss)
-        self.dynamics_loss_batch = self.inverse_loss_batch + mu2 * self.forward_loss_batch
+        self.forward_loss_batch = add_n(self.forward_losses, 32)
+        self.inverse_loss_batch = add_n(self.action_losses, 32)
+        self.touch_loss_batch = add_n(self.touch_losses, 32)
+        self.dynamics_loss_batch = self.inverse_loss_batch + mu2 * self.forward_loss_batch + mu5 * self.touch_loss_batch
         self.accuracy = tf.reduce_mean(tf.concat(1, self.correct_predictions))
         self.feat_norm_loss = tf.reduce_mean([tf.abs(f) for f in self.img_features])
         self.forward_loss = tf.reduce_mean(self.forward_loss_batch)
         self.inverse_loss = tf.reduce_mean(self.inverse_loss_batch)
+        self.touch_loss = tf.reduce_mean(self.touch_loss_batch)
         self.reconstruction_loss = tf.add_n(self.img_reconstruction_losses)
-        self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss + mu3 * self.reconstruction_loss + mu4 * self.feat_norm_loss
+        self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss + mu3 * self.reconstruction_loss + mu4 * self.feat_norm_loss + mu5 * self.touch_loss
         self.transformer_loss = -self.inverse_loss + mu1 * tf.reduce_mean(self.t_masks)
 
         feats = [self.img_features[0] for _ in range(self.context_frames)]
@@ -217,7 +228,7 @@ class DynamicsModel(object):
         else:
             readers = self.train_input_readers if isTrain else self.test_input_readers
             data = self.sess.run(readers)
-            # print len(data)
+            print len(data)
             # print data
             # print len(self.inputs)
             feed_dict = {}
@@ -453,6 +464,24 @@ class DynamicsModel(object):
                     net = slim.fully_connected(net, self.dsize * 2, scope='fc_2', activation_fn=None)
                     return tf.reshape(net, [-1, 2, self.dsize])
 
+    def touch_pred_network(self, fs, reuse=False):
+        """N is the discretization bins"""
+        with tf.variable_scope('touchpred', reuse=reuse) as sc:
+            if self.conf.get("noslim"):
+                net = tf.concat(1, fs)
+                net = make_network(net, [self.fsize*self.context_frames, 100, 2*self.dsize])
+                return tf.reshape(net, [-1, 2, self.dsize])
+            else:
+                with slim.arg_scope([slim.fully_connected],
+                    weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
+                    weights_regularizer=slim.l2_regularizer(0.0005),
+                    activation_fn=tf.nn.elu, reuse=reuse):
+                    net = tf.concat(1, fs)
+                    net = slim.fully_connected(net, 100, scope='fc_1')
+                    net = slim.fully_connected(net, 20, scope='fc_2', activation_fn=None)
+                    return tf.reshape(net, [-1, 20])
+
+
     def forward_pred_network(self, fs, u, reuse=False):
         """
         fcsize is the size of f1 and f2"""
@@ -603,6 +632,12 @@ def dict_to_string(params):
         if params[key] is not None:
             name = name + str(key) + "_" + str(params[key]) + "/"
     return name[:-1]
+
+def add_n(l, n=1):
+    if l:
+        return tf.add_n(l)
+    else:
+        return tf.constant(np.zeros((n), dtype=np.float32))
 
 def discretize_actions(x, N=20):
     batches = x.shape[0]
