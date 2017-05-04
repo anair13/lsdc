@@ -544,6 +544,7 @@ def get_default_conf():
     conf['padding'] = "valid"
     conf['loadalldata'] = 0
     conf['miningtemp'] = 0
+    conf['initialize'] = 0
     return conf
 
 DEFAULT_CONF = get_default_conf()
