@@ -258,7 +258,7 @@ class DynamicsModel(object):
 
         self.save_rollout_gifs()
 
-        val_output = self.run(batches=1)
+        val_output = self.run(batches=100)
         logger.error(self.validation_summary(val_output))
 
     def train_transformer(self):
