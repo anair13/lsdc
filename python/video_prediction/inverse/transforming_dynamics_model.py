@@ -61,7 +61,7 @@ class DynamicsModel(object):
         self.state_batch = tf.placeholder("float", [None, 15, 4])
         self.inputs = [self.image_batch, self.raw_action_batch, self.state_batch]
         if self.conf.get("touch"):
-            self.inputs += [touch_batch]
+            self.inputs += [self.touch_batch]
 
         train_conf = self.conf.copy()
         train_conf["data_dir"] += '/train'
@@ -74,7 +74,7 @@ class DynamicsModel(object):
         # image_batch, raw_action_batch, state_batch = self.inputs
 
         D = lambda x: discretize_actions(x, self.conf['discretize'])
-        action_batch = tf.py_func(D, [raw_action_batch], tf.float32)
+        action_batch = tf.py_func(D, [self.raw_action_batch], tf.float32)
         self.action_batch = action_batch
 
         self.fsize = self.conf.get('fsize', 100)
