@@ -14,7 +14,7 @@ if __name__ == "__main__":
         mu2=1e-6,
         mu3 = 1,
         autoencoder="decode",
-        loadalldata=300,
+        loadalldata=500,
         miningtemp=1,
     )
 
