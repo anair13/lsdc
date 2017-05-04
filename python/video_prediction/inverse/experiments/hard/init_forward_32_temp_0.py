@@ -25,4 +25,4 @@ if __name__ == "__main__":
     )
 
     model = transforming_dynamics_model.DynamicsModel(new_conf)
-    model.train(10000, False, init_conf=(50000, init_conf))
+    model.train(10000, init_conf=(50000, init_conf))

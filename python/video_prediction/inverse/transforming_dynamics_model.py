@@ -57,7 +57,11 @@ class DynamicsModel(object):
 
         image_batch  = tf.placeholder("float", [None, 15, 64, 64, 3])
         raw_action_batch = tf.placeholder("float", [None, 15, 2])
-        self.inputs = [image_batch, raw_action_batch]
+        touch_batch = tf.placeholder("float", [None, 15, 20])
+        state_batch = tf.placeholder("float", [None, 15, 4])
+        self.inputs = [image_batch, raw_action_batch, state_batch]
+        if self.conf.get("touch"):
+            self.inputs += [touch_batch]
 
         train_conf = self.conf.copy()
         train_conf["data_dir"] += '/train'
@@ -207,14 +211,19 @@ class DynamicsModel(object):
             self.sample = np.random.choice(self.data_size, batch_size, p=self.weights)
             image_data = self.all_image_data[self.sample, :, :, :, :]
             action_data = self.all_action_data[self.sample, :, :]
+            image_batch, action_batch, state_batch = inputs
+            feed_dict = {image_batch: image_data, action_batch: action_data}
+            return feed_dict
         else:
             readers = self.train_input_readers if isTrain else self.test_input_readers
-            image_batch, raw_action_batch, state_batch = readers
-
-            image_data, action_data, state_data = self.sess.run([image_batch, raw_action_batch, state_batch])
-        image_batch, action_batch = inputs
-        feed_dict = {image_batch: image_data, action_batch: action_data}
-        return feed_dict
+            data = self.sess.run(readers)
+            # print len(data)
+            # print data
+            # print len(self.inputs)
+            feed_dict = {}
+            for i, inp in enumerate(self.inputs):
+                feed_dict[inp] = data[i]
+            return feed_dict
 
     def train(self, max_iters = 100000, use_existing = True, init_conf=None):
         if init_conf:
@@ -545,6 +554,7 @@ def get_default_conf():
     conf['loadalldata'] = 0
     conf['miningtemp'] = 0
     conf['initialize'] = 0
+    conf['touch'] = 0
     return conf
 
 DEFAULT_CONF = get_default_conf()

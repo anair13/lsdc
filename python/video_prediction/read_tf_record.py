@@ -146,7 +146,7 @@ def build_tfrecord_input(conf, training=True, gtruth_pred = False):
                 capacity=100 * conf['batch_size'])
 
                 return image_batch, action_batch, state_batch, object_pos_batch
-        elif 'touch' in conf:
+        elif conf['touch']:
             [image_batch, action_batch, state_batch, touch_batch] = tf.train.batch(
                 [image_seq, action_seq, state_seq, touch_seq],
                 conf['batch_size'],
@@ -306,7 +306,7 @@ if __name__ == '__main__':
     conf = {}
 
     # DATA_DIR = '/home/frederik/Documents/lsdc/experiments/cem_exp/benchmarks_goalimage/pixelerror_store_wholepred/tfrecords/train'
-    DATA_DIR = '/home/frederik/Documents/lsdc/pushing_data/random_action_var10_touch/train'
+    DATA_DIR = '/home/ashvin/lsdc/pushing_data/random_action_var10_touch/train'
 
     conf['schedsamp_k'] = -1  # don't feed ground truth
     conf['data_dir'] = DATA_DIR  # 'directory containing data_files.' ,
@@ -332,7 +332,7 @@ if __name__ == '__main__':
     if gtruth_pred:
         gtruth_image_batch, pred_image_batch  = build_tfrecord_input(conf, training=True, gtruth_pred= gtruth_pred)
     elif touch:
-        conf['touch'] = ''
+        conf['touch'] = '1'
         image_batch, action_batch, state_batch, touch_batch = build_tfrecord_input(conf, training=True)
     else:
         image_batch, action_batch, state_batch = build_tfrecord_input(conf, training=True, gtruth_pred=True)
@@ -355,16 +355,16 @@ if __name__ == '__main__':
 
 
 
-        # print 'action:', action_data.shape
-        # print 'action: batch ind 0', action_data[0]
-        # print 'action: batch ind 1', action_data[1]
-        # print 'images:', image_data.shape
-        #
-        # print 'states:', state_data.shape
-        # print 'states: batch ind 0', state_data[0]
-        # print 'states: batch ind 1', state_data[1]
-        # print 'average speed in dir1:', np.average(state_data[:,:,3])
-        # print 'average speed in dir2:', np.average(state_data[:,:,2])
+        print 'action:', action_data.shape
+        print 'action: batch ind 0', action_data[0]
+        print 'action: batch ind 1', action_data[1]
+        print 'images:', image_data.shape
+
+        print 'states:', state_data.shape
+        print 'states: batch ind 0', state_data[0]
+        print 'states: batch ind 1', state_data[1]
+        print 'average speed in dir1:', np.average(state_data[:,:,3])
+        print 'average speed in dir2:', np.average(state_data[:,:,2])
 
         print 'touchdata:', touch_data.shape
         print 'touch_data: batch ind 0', touch_data[0]

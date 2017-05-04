@@ -20,7 +20,7 @@ if __name__ == "__main__":
         mu3 = 1,
         autoencoder="decode",
         loadalldata=500,
-        miningtemp=1,
+        miningtemp=0.01,
         initialize=1,
     )
 
