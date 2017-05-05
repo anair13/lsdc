@@ -133,12 +133,14 @@ class DynamicsModel(object):
         self.forward_losses = []
         self.touch_preds = []
         self.touch_losses = []
+        self.correct_touch_predictions = []
         feats = [self.img_features[0] for _ in range(self.context_frames)]
         for i in range(self.conf['sequence_length'] - 1):
             f1 = self.img_features[i]
             f2 = self.img_features[i+1]
 
             u = tf.reshape(self.action_batch[:, i, :, :], [-1, 2, self.dsize])
+            T = tf.reshape(self.touch_batch[:, i, :, :], [-1, 20, 2])
 
             a = self.action_pred_network(feats + [f2], i != 0)
             l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, u), 1)
@@ -149,9 +151,9 @@ class DynamicsModel(object):
 
             if self.conf.get("touch"):
                 t = self.touch_pred_network(feats + [f2], i != 0)
-                T = self.touch_batch[:, i, :]
-                e = T - t
-                l = tf.reduce_sum(e * e, 1)
+                l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(t, T), 1)
+                c = tf.equal(tf.argmax(t, 2), tf.argmax(T, 2))
+                self.correct_touch_predictions.append(tf.cast(c, tf.float32))
                 self.touch_preds.append(t)
                 self.touch_losses.append(l)
 
@@ -188,7 +190,8 @@ class DynamicsModel(object):
         self.inverse_loss_batch = add_n(self.action_losses, 32)
         self.touch_loss_batch = add_n(self.touch_losses, 32)
         self.dynamics_loss_batch = self.inverse_loss_batch + mu2 * self.forward_loss_batch + mu5 * self.touch_loss_batch
-        self.accuracy = tf.reduce_mean(tf.concat(1, self.correct_action_predictions))
+        self.action_accuracy = tf.reduce_mean(tf.concat(1, self.correct_action_predictions))
+        self.touch_accuracy = tf.reduce_mean(tf.concat(1, self.correct_touch_predictions))
         self.feat_norm_loss = tf.reduce_mean([tf.abs(f) for f in self.img_features])
         self.forward_loss = tf.reduce_mean(self.forward_loss_batch)
         self.inverse_loss = tf.reduce_mean(self.inverse_loss_batch)
@@ -210,8 +213,8 @@ class DynamicsModel(object):
         self.network.add_to_losses(loss)
         self.train_network = tf_utils.TFTrain(self.inputs, self.network, batchSz=self.conf['batch_size'], initLr=self.conf['learning_rate'], var_list=var_list)
         # self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.transformer_loss, self.accuracy], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'transformer_loss', 'accuracy'])
-        self.tracking_vars = [self.dynamics_loss, self.inverse_loss, self.forward_loss, self.reconstruction_loss, self.accuracy, self.feat_norm_loss, self.touch_loss]
-        self.tracking_names = ['dynamics_loss', 'inverse_loss', 'forward_loss', 'reconstruction_loss', 'accuracy', 'feat_norm', 'touch_loss']
+        self.tracking_vars = [self.dynamics_loss, self.inverse_loss, self.forward_loss, self.reconstruction_loss, self.action_accuracy, self.feat_norm_loss, self.touch_loss, self.touch_accuracy]
+        self.tracking_names = ['dynamics_loss', 'inverse_loss', 'forward_loss', 'reconstruction_loss', 'accuracy', 'feat_norm', 'touch_loss', 'touch_acc']
         self.train_network.add_loss_summaries(self.tracking_vars, self.tracking_names)
 
         print "done with network setup"
@@ -378,17 +381,19 @@ class DynamicsModel(object):
     def load_all_training_data(self, batches):
         image_batch, raw_action_batch, state_batch = self.train_input_readers
         self.data_size = batches * self.batch_size
-        if self.all_image_data is None:
-            self.all_image_data = np.zeros((self.data_size, self.sequence_length, 64, 64, 3))
-            self.all_action_data = np.zeros((self.data_size, self.sequence_length, 2))
+        if DynamicsModel.all_image_data is None:
+            DynamicsModel.all_image_data = np.zeros((self.data_size, self.sequence_length, 64, 64, 3))
+            DynamicsModel.all_action_data = np.zeros((self.data_size, self.sequence_length, 2))
+            for i in range(batches):
+                start = self.batch_size * i
+                end = start + self.batch_size
+                image_data, action_data, state_data = self.sess.run([image_batch, raw_action_batch, state_batch])
+                DynamicsModel.all_image_data[start:end, :, :, :, :] = image_data
+                DynamicsModel.all_action_data[start:end, :, :] = action_data
+        self.all_image_data = DynamicsModel.all_image_data
+        self.all_action_data = DynamicsModel.all_action_data
         self.weights = np.ones((self.data_size)) / float(self.data_size)
         self.data_losses = np.ones((self.data_size)) * 100
-        for i in range(batches):
-            start = self.batch_size * i
-            end = start + self.batch_size
-            image_data, action_data, state_data = self.sess.run([image_batch, raw_action_batch, state_batch])
-            self.all_image_data[start:end, :, :, :, :] = image_data
-            self.all_action_data[start:end, :, :] = action_data
         print "loaded data, size", self.data_size
 
     ##### NETWORK CONSTRUCTION FUNCTIONS
@@ -475,19 +480,14 @@ class DynamicsModel(object):
     def touch_pred_network(self, fs, reuse=False):
         """N is the discretization bins"""
         with tf.variable_scope('touchpred', reuse=reuse) as sc:
-            if self.conf.get("noslim"):
+            with slim.arg_scope([slim.fully_connected],
+                weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
+                weights_regularizer=slim.l2_regularizer(0.0005),
+                activation_fn=tf.nn.elu, reuse=reuse):
                 net = tf.concat(1, fs)
-                net = make_network(net, [self.fsize*self.context_frames, 100, 2*self.dsize])
-                return tf.reshape(net, [-1, 2, self.dsize])
-            else:
-                with slim.arg_scope([slim.fully_connected],
-                    weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
-                    weights_regularizer=slim.l2_regularizer(0.0005),
-                    activation_fn=tf.nn.elu, reuse=reuse):
-                    net = tf.concat(1, fs)
-                    net = slim.fully_connected(net, 100, scope='fc_1')
-                    net = slim.fully_connected(net, 20, scope='fc_2', activation_fn=None)
-                    return tf.reshape(net, [-1, 20])
+                net = slim.fully_connected(net, 100, scope='fc_1')
+                net = slim.fully_connected(net, 40, scope='fc_2', activation_fn=None)
+                return tf.reshape(net, [-1, 20, 2])
 
 
     def forward_pred_network(self, fs, u, reuse=False):
