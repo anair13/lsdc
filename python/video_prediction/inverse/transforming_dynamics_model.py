@@ -191,7 +191,6 @@ class DynamicsModel(object):
         self.touch_loss_batch = add_n(self.touch_losses, 32)
         self.dynamics_loss_batch = self.inverse_loss_batch + mu2 * self.forward_loss_batch + mu5 * self.touch_loss_batch
         self.action_accuracy = tf.reduce_mean(tf.concat(1, self.correct_action_predictions))
-        self.touch_accuracy = tf.reduce_mean(tf.concat(1, self.correct_touch_predictions))
         self.feat_norm_loss = tf.reduce_mean([tf.abs(f) for f in self.img_features])
         self.forward_loss = tf.reduce_mean(self.forward_loss_batch)
         self.inverse_loss = tf.reduce_mean(self.inverse_loss_batch)
@@ -199,6 +198,11 @@ class DynamicsModel(object):
         self.reconstruction_loss = tf.add_n(self.img_reconstruction_losses)
         self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss + mu3 * self.reconstruction_loss + mu4 * self.feat_norm_loss + mu5 * self.touch_loss
         self.transformer_loss = -self.inverse_loss + mu1 * tf.reduce_mean(self.t_masks)
+
+        if self.conf.get("touch"):
+            self.touch_accuracy = tf.reduce_mean(tf.concat(1, self.correct_touch_predictions))
+        else:
+            self.touch_accuracy = tf.constant(0.0)
 
         feats = [self.img_features[0] for _ in range(self.context_frames)]
         self.rollout_outputs, self.rollout_reconstructions = self.rollout_network(feats, self.action_batch, imgs=True)
