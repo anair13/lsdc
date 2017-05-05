@@ -8,6 +8,11 @@ import collections
 import tensorflow as tf
 
 if __name__ == "__main__":
+    init_conf = transforming_dynamics_model.get_conf(
+        fsize=32,
+        mu2=1e-6,
+    )
+
     DATA_DIR = '/home/ashvin/lsdc/pushing_data/random_action_var10_touch'
     new_conf = transforming_dynamics_model.get_conf(
         data_dir = DATA_DIR,
@@ -23,4 +28,4 @@ if __name__ == "__main__":
     )
 
     model = transforming_dynamics_model.DynamicsModel(new_conf)
-    model.train(20000)
+    model.train(10000, init_conf=(50000, init_conf))

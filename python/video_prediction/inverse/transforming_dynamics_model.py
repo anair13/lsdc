@@ -254,6 +254,7 @@ class DynamicsModel(object):
         if init_conf:
             model_n, init_conf = init_conf
             init_name = tf_data_dir + 'tf_models/' + dict_to_string(init_conf) + "/model-" + str(model_n)
+            print "restoring from", init_name
         else:
             init_name = None
 
@@ -268,7 +269,7 @@ class DynamicsModel(object):
         self.train_network.maxIter_ = max_iters
         self.train_network.dispIter_ = 100
         self.train_network.saveIter_ = 1000
-        self.train_network.train(self.train_batch, self.train_batch, use_existing=use_existing, sess=self.sess, init_path=init_name, model=self, tracking_tensors=[self.dynamics_loss_batch])
+        self.train_network.train(self.train_batch, self.train_batch, use_existing=use_existing, sess=self.sess, init_path=init_name, model=self, tracking_tensors=[self.inverse_loss_batch])
 
         self.save_rollout_gifs()
 
