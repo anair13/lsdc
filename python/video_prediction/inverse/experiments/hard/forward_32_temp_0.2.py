@@ -15,7 +15,7 @@ if __name__ == "__main__":
         mu3 = 1,
         autoencoder="decode",
         loadalldata=500,
-        miningtemp=2 * (10.0 ** (-i)),
+        miningtemp=0.2,
     )
 
     model = transforming_dynamics_model.DynamicsModel(new_conf)
