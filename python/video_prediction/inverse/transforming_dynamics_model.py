@@ -37,12 +37,18 @@ import os
 HERE_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(HERE_DIR+"/..")
 from utils_vpred import create_gif
-import read_tf_record_mine as read_tf_record
+import read_tf_record_mine
+import read_tf_record
 
 class DynamicsModel(object):
     """An inverse model I with a adversarial transformer T that tries to hide information
     from the inverse model in order to force the model to pay attention to more
     """
+
+    # class objects to share data
+    all_image_data = None
+    all_action_data = None
+
     def __init__(self, train_conf, test_conf = {}):
         print "setting up network"
         self.name = dict_to_string(train_conf)
@@ -141,7 +147,9 @@ class DynamicsModel(object):
 
             if self.conf.get("touch"):
                 t = self.touch_pred_network(feats + [f2], i != 0)
-                l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(t, u), 1)
+                T = self.touch_batch[:, i, :]
+                e = T - t
+                l = tf.reduce_sum(e * e, 1)
                 self.touch_preds.append(t)
                 self.touch_losses.append(l)
 
@@ -200,8 +208,8 @@ class DynamicsModel(object):
         self.network.add_to_losses(loss)
         self.train_network = tf_utils.TFTrain(self.inputs, self.network, batchSz=self.conf['batch_size'], initLr=self.conf['learning_rate'], var_list=var_list)
         # self.train_network.add_loss_summaries([self.dynamics_loss, self.inverse_loss, self.forward_loss, self.transformer_loss, self.accuracy], ['dynamics_loss', 'inverse_loss', 'forward_loss', 'transformer_loss', 'accuracy'])
-        self.tracking_vars = [self.dynamics_loss, self.inverse_loss, self.forward_loss, self.reconstruction_loss, self.accuracy, self.feat_norm_loss]
-        self.tracking_names = ['dynamics_loss', 'inverse_loss', 'forward_loss', 'reconstruction_loss', 'accuracy', 'feat_norm']
+        self.tracking_vars = [self.dynamics_loss, self.inverse_loss, self.forward_loss, self.reconstruction_loss, self.accuracy, self.feat_norm_loss, self.touch_loss]
+        self.tracking_names = ['dynamics_loss', 'inverse_loss', 'forward_loss', 'reconstruction_loss', 'accuracy', 'feat_norm', 'touch_loss']
         self.train_network.add_loss_summaries(self.tracking_vars, self.tracking_names)
 
         print "done with network setup"
@@ -368,8 +376,9 @@ class DynamicsModel(object):
     def load_all_training_data(self, batches):
         image_batch, raw_action_batch, state_batch = self.train_input_readers
         self.data_size = batches * self.batch_size
-        self.all_image_data = np.zeros((self.data_size, self.sequence_length, 64, 64, 3))
-        self.all_action_data = np.zeros((self.data_size, self.sequence_length, 2))
+        if self.all_image_data is None:
+            self.all_image_data = np.zeros((self.data_size, self.sequence_length, 64, 64, 3))
+            self.all_action_data = np.zeros((self.data_size, self.sequence_length, 2))
         self.weights = np.ones((self.data_size)) / float(self.data_size)
         self.data_losses = np.ones((self.data_size)) * 100
         for i in range(batches):
@@ -572,6 +581,7 @@ def get_default_conf():
     conf['mu2'] = 0 # forward weight
     conf['mu3'] = 1 # autoencoder weight
     conf['mu4'] = 0 # feature 1-norm loss weight
+    conf['mu5'] = 0
     conf['seq'] = 0 # to alternate training phase
     conf['autoencoder'] = "decode" # autoencoder mode, decode means do not pass gradients, None means no autoencoder at all
     conf['forwardloss'] = "gaussian"

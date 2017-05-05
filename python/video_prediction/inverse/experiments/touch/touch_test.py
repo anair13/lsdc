@@ -16,16 +16,11 @@ if __name__ == "__main__":
         fsize=32,
         mu2=1e-6,
         mu3 = 1,
+        mu5 = 0.01,
         autoencoder="decode",
         touch=1,
+        skip_frame=1,
     )
-    conf = new_conf
-    conf['schedsamp_k'] = -1  # don't feed ground truth
-    conf['skip_frame'] = 1
-    # conf['train_val_split']= 0.95
-    conf['sequence_length']= 15      # 'sequence length, including context frames.'
-    conf['use_state'] = True
-    conf['visualize']=False
 
     model = transforming_dynamics_model.DynamicsModel(new_conf)
     model.train(20000, False)

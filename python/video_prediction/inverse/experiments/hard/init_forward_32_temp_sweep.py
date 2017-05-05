@@ -29,3 +29,5 @@ if __name__ == "__main__":
         model.train(10000, init_conf=(50000, init_conf))
 
         tf.reset_default_graph()
+
+        del model
