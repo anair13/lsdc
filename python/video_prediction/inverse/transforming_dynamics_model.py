@@ -63,11 +63,11 @@ class DynamicsModel(object):
 
         self.image_batch  = tf.placeholder("float", [None, 15, 64, 64, 3])
         self.raw_action_batch = tf.placeholder("float", [None, 15, 2])
-        self.touch_batch = tf.placeholder("float", [None, 15, 20])
+        self.raw_touch_batch = tf.placeholder("float", [None, 15, 20])
         self.state_batch = tf.placeholder("float", [None, 15, 4])
         self.inputs = [self.image_batch, self.raw_action_batch, self.state_batch]
         if self.conf.get("touch"):
-            self.inputs += [self.touch_batch]
+            self.inputs += [self.raw_touch_batch]
 
         train_conf = self.conf.copy()
         train_conf["data_dir"] += '/train'
@@ -80,8 +80,10 @@ class DynamicsModel(object):
         # image_batch, raw_action_batch, state_batch = self.inputs
 
         D = lambda x: discretize_actions(x, self.conf['discretize'])
-        action_batch = tf.py_func(D, [self.raw_action_batch], tf.float32)
-        self.action_batch = action_batch
+        self.action_batch = tf.py_func(D, [self.raw_action_batch], tf.float32)
+
+        D = lambda x: discretize_actions(x, 2, -1, 3) # hack way to threshold at 1
+        self.touch_batch = tf.py_func(D, [self.raw_touch_batch], tf.float32)
 
         self.fsize = self.conf.get('fsize', 100)
         self.dsize = self.conf.get('discretize', 20)
@@ -126,7 +128,7 @@ class DynamicsModel(object):
 
         self.action_preds = []
         self.action_losses = []
-        self.correct_predictions = []
+        self.correct_action_predictions = []
         self.forward_predictions = []
         self.forward_losses = []
         self.touch_preds = []
@@ -136,12 +138,12 @@ class DynamicsModel(object):
             f1 = self.img_features[i]
             f2 = self.img_features[i+1]
 
-            u = tf.reshape(action_batch[:, i, :, :], [-1, 2, self.dsize])
+            u = tf.reshape(self.action_batch[:, i, :, :], [-1, 2, self.dsize])
 
             a = self.action_pred_network(feats + [f2], i != 0)
             l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, u), 1)
             c = tf.equal(tf.argmax(a, 2), tf.argmax(u, 2))
-            self.correct_predictions.append(tf.cast(c, tf.float32))
+            self.correct_action_predictions.append(tf.cast(c, tf.float32))
             self.action_preds.append(a)
             self.action_losses.append(l)
 
@@ -186,7 +188,7 @@ class DynamicsModel(object):
         self.inverse_loss_batch = add_n(self.action_losses, 32)
         self.touch_loss_batch = add_n(self.touch_losses, 32)
         self.dynamics_loss_batch = self.inverse_loss_batch + mu2 * self.forward_loss_batch + mu5 * self.touch_loss_batch
-        self.accuracy = tf.reduce_mean(tf.concat(1, self.correct_predictions))
+        self.accuracy = tf.reduce_mean(tf.concat(1, self.correct_action_predictions))
         self.feat_norm_loss = tf.reduce_mean([tf.abs(f) for f in self.img_features])
         self.forward_loss = tf.reduce_mean(self.forward_loss_batch)
         self.inverse_loss = tf.reduce_mean(self.inverse_loss_batch)
@@ -646,7 +648,7 @@ def add_n(l, n=1):
     else:
         return tf.constant(np.zeros((n), dtype=np.float32))
 
-def discretize_actions(x, N=20):
+def discretize_actions(x, N=20, min=-10, max=10):
     batches = x.shape[0]
     frames = x.shape[1]
     actiondim = x.shape[2]
@@ -654,6 +656,6 @@ def discretize_actions(x, N=20):
     for b in range(batches):
         for f in range(frames):
             for a in range(actiondim):
-                X[b, f, a, :] = discretize.one_hot_encode(x[b, f, a], -10, 10, N)
+                X[b, f, a, :] = discretize.one_hot_encode(x[b, f, a], min, max, N)
     return np.float32(X)
 
