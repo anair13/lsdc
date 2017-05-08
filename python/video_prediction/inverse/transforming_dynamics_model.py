@@ -82,7 +82,7 @@ class DynamicsModel(object):
         D = lambda x: discretize_actions(x, self.conf['discretize'])
         self.action_batch = tf.py_func(D, [self.raw_action_batch], tf.float32)
 
-        D = lambda x: discretize_actions(x, 2, -1, 3) # hack way to threshold at 1
+        D = lambda x: discretize_touch(x)
         self.touch_batch = tf.py_func(D, [self.raw_touch_batch], tf.float32)
 
         self.fsize = self.conf.get('fsize', 100)
@@ -140,7 +140,7 @@ class DynamicsModel(object):
             f2 = self.img_features[i+1]
 
             u = tf.reshape(self.action_batch[:, i, :, :], [-1, 2, self.dsize])
-            T = tf.reshape(self.touch_batch[:, i, :, :], [-1, 20, 2])
+            T = tf.reshape(self.touch_batch[:, i, :, :], [-1, 20, 1])
 
             a = self.action_pred_network(feats + [f2], i != 0)
             l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, u), 1)
@@ -151,8 +151,8 @@ class DynamicsModel(object):
 
             if self.conf.get("touch"):
                 t = self.touch_pred_network(feats + [f2], i != 0)
-                l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(t, T), 1)
-                c = tf.equal(tf.argmax(t, 2), tf.argmax(T, 2))
+                l = tf.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(t, T, 100), 1)
+                c = tf.equal(t > 0.5, T > 0.5)
                 self.correct_touch_predictions.append(tf.cast(c, tf.float32))
                 self.touch_preds.append(t)
                 self.touch_losses.append(l)
@@ -491,8 +491,8 @@ class DynamicsModel(object):
                 activation_fn=tf.nn.elu, reuse=reuse):
                 net = tf.concat(1, fs)
                 net = slim.fully_connected(net, 100, scope='fc_1')
-                net = slim.fully_connected(net, 40, scope='fc_2', activation_fn=None)
-                return tf.reshape(net, [-1, 20, 2])
+                net = slim.fully_connected(net, 20, scope='fc_2', activation_fn=None)
+                return tf.reshape(net, [-1, 20, 1])
 
 
     def forward_pred_network(self, fs, u, reuse=False):
@@ -662,5 +662,17 @@ def discretize_actions(x, N=20, min=-10, max=10):
         for f in range(frames):
             for a in range(actiondim):
                 X[b, f, a, :] = discretize.one_hot_encode(x[b, f, a], min, max, N)
+    return np.float32(X)
+
+THRESHOLD = 1
+def discretize_touch(x):
+    batches = x.shape[0]
+    frames = x.shape[1]
+    actiondim = x.shape[2]
+    X = np.zeros((batches, frames, actiondim, 1))
+    for b in range(batches):
+        for f in range(frames):
+            for a in range(actiondim):
+                X[b, f, a, :] = x[b, f, a] > THRESHOLD
     return np.float32(X)
 
