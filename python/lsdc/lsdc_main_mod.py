@@ -40,7 +40,7 @@ class LSDCMain(object):
     """ Main class to run algorithms and experiments. """
     def __init__(self, config, quit_on_end=False, gpu_id= 0, ngpu= None):
 
-
+        self.I = 0
         self._quit_on_end = quit_on_end
         self._hyperparams = config
         self._conditions = config['common']['conditions']
@@ -187,6 +187,10 @@ class LSDCMain(object):
         """
         
         traj = copy.deepcopy(traj)
+        self.I += 1
+        print self.I
+        if self._hyperparams.get('onlytouch') and not np.any(traj.touchdata == 0):
+            return
         self.trajectory_list.append(traj)
         if 'traj_per_file' in self._hyperparams:
             traj_per_file = self._hyperparams['traj_per_file']
