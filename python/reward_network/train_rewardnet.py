@@ -84,17 +84,27 @@ class Model(object):
             rand_pair = np.random.randint(0, conf['sequence_length'] - 1, size=[conf['batch_size'],2])
 
             ind_0 = tf.reshape(tf.reduce_min(rand_pair, reduction_indices=1), shape=[conf['batch_size'],1])
-            ind_1 = tf.reshape(tf.reduce_max(rand_pair, reduction_indices=1), shape=[conf['batch_size'],1])
 
-            num_ind_0 = tf.concat(1, [first_row, ind_0])
-            num_ind_1 = tf.concat(1, [first_row, ind_1])
+            if 'last_image1' in conf:
+                ind_1 = tf.constant(13,dtype=tf.int64,shape=[conf['batch_size'],1])
+            else:
+                ind_1 = tf.reshape(tf.reduce_max(rand_pair, reduction_indices=1), shape=[conf['batch_size'],1])
+
+            self.gtruth_video = gtruth_video
+            self.pred_video = pred_video
 
             if pred_video is not None:
+                self.num_ind_0 = num_ind_0 = tf.concat(1, [first_row, ind_0])
+                self.num_ind_1 = num_ind_1 = tf.concat(1, [first_row, ind_1])
                 self.image_0 = image_0 = tf.gather_nd(pred_video, num_ind_0)
                 self.image_1 = image_1 = tf.gather_nd(gtruth_video, num_ind_1)
+
             else:
+                self.num_ind_0 = num_ind_0 = tf.concat(1, [first_row, ind_0])
+                self.num_ind_1 = num_ind_1 = tf.concat(1, [first_row, ind_1])
                 self.image_0 = image_0 = tf.gather_nd(video, num_ind_0)
                 self.image_1 = image_1 = tf.gather_nd(video, num_ind_1)
+
 
         if reuse_scope is None:
             is_training = True
@@ -108,7 +118,7 @@ class Model(object):
                 conf['dropout'] = 1
 
         if reuse_scope is None:
-            softmax_output  = construct_model(conf, images_0=image_0,
+            logits, fp1, fp2  = construct_model(conf, images_0=image_0,
                                             images_1=image_1,
                                             is_training= is_training)
         else: # If it's a validation or test model.
@@ -117,12 +127,12 @@ class Model(object):
                 print 'valmodel with is_training: ', is_training
 
             with tf.variable_scope(reuse_scope, reuse=True):
-                softmax_output = construct_model(conf,  images_0=image_0,
+                logits, fp1, fp2 = construct_model(conf,  images_0=image_0,
                                                 images_1=image_1,
                                                 is_training=is_training)
 
-        self.softmax_output = tf.nn.softmax(softmax_output)
-
+        self.softmax_output = tf.nn.softmax(logits)
+        self.fp1, self.fp2 = fp1, fp2
 
         # mult = tf.mul(softmax_output, tf.cast(tf.range(0, conf['sequence_length']-1), tf.float32))
         # expected_timesteps = tf.reduce_sum(mult,1)
@@ -148,7 +158,6 @@ class Model(object):
         #     da_dx1.append(grad)
         # self.da_dx1 = tf.concat(0, da_dx1)
 
-
         if inference == False:
             self.hard_labels = hard_labels = tf.squeeze(ind_1 - ind_0)
 
@@ -166,10 +175,10 @@ class Model(object):
 
             if 'soft_labels' in conf:
                 self.cross_entropy = cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
-                    labels=self.soft_labels, logits=softmax_output, name='cross_entropy_per_example')
+                    labels=self.soft_labels, logits=logits, name='cross_entropy_per_example')
             else:
                 self.cross_entropy = cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
-                    labels=hard_labels, logits=softmax_output, name='cross_entropy_per_example')
+                    labels=hard_labels, logits=logits, name='cross_entropy_per_example')
 
             cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
 
@@ -190,11 +199,14 @@ class Model(object):
 
 
 def main(unused_argv):
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(FLAGS.device)
+    if FLAGS.device == -1:
+        print 'GPU usage disabled!'
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(FLAGS.device)
     print 'using CUDA_VISIBLE_DEVICES=', FLAGS.device
     from tensorflow.python.client import device_lib
     print device_lib.list_local_devices()
-
 
     conf_file = FLAGS.hyper
     if not os.path.exists(conf_file):
@@ -209,8 +221,8 @@ def main(unused_argv):
         conf['visualize'] = conf['output_dir'] + '/' + FLAGS.visualize
         conf['event_log_dir'] = '/tmp'
         filenames = gfile.Glob(os.path.join(conf['data_dir'], '*'))
-        conf['visual_file'] = filenames[0]
-        conf['batch_size'] = 8
+        conf['visual_file'] = filenames
+        conf['batch_size'] = 100
 
     print '-------------------------------------------------------------------'
     print 'verify current settings!! '
@@ -222,18 +234,18 @@ def main(unused_argv):
     print 'Constructing models and inputs.'
     with tf.variable_scope('trainmodel') as training_scope:
         if 'pred_gtruth' in conf:
-            gtruth_video, pred_video = build_tfrecord_input(conf, training=True)
+            gtruth_video, pred_video = build_tfrecord_input(conf, training=True, gtruth_pred= True)
             model = Model(conf, pred_video= pred_video, gtruth_video= gtruth_video)
         else:
-            images, actions, states = build_tfrecord_input(conf, training=True)
+            images, actions, states, objectpos = build_tfrecord_input(conf, training=True)
             model = Model(conf, images)
 
     with tf.variable_scope('val_model', reuse=None):
         if 'pred_gtruth' in conf:
-            gtruth_video_val, pred_video_val = build_tfrecord_input(conf, training=True)
+            gtruth_video_val, pred_video_val = build_tfrecord_input(conf, training=True, gtruth_pred= True)
             val_model = Model(conf, pred_video= pred_video_val, gtruth_video= gtruth_video_val)
         else:
-            images_val, actions_val, states_val = build_tfrecord_input(conf, training=False)
+            images_val, actions_val, states_val, objectpos_val = build_tfrecord_input(conf, training=False)
             val_model = Model(conf, images_val, reuse_scope= training_scope)
 
     print 'Constructing saver.'
@@ -250,7 +262,7 @@ def main(unused_argv):
     sess.run(tf.initialize_all_variables())
 
     if FLAGS.visualize:
-        visualize(conf, sess, saver, val_model)
+        visualize(conf, sess, saver, val_model, states, objectpos_val)
         return
 
     itr_0 =0
@@ -324,26 +336,33 @@ def main(unused_argv):
     tf.logging.flush()
 
 
-def visualize(conf, sess, saver, model):
+def visualize(conf, sess, saver, model, states, objectpos):
     print 'creating visualizations ...'
     saver.restore(sess,  conf['visualize'])
 
     feed_dict = {model.lr: 0.0,
                  model.prefix: 'val',
                  }
-    im0, im1, softout, c_entr, gtruth, soft_labels, dadx0, dadx1 = sess.run([  model.image_0,
-                                                    model.image_1,
-                                                    model.softmax_output,
-                                                    model.cross_entropy,
-                                                    model.hard_labels,
-                                                    model.soft_labels,
-                                                    model.da_dx0,
-                                                    model.da_dx1
-                                                                ],
-                                                    feed_dict)
 
-    fig = plt.figure(figsize=(20, 10), dpi=80)
+    im0, im1, softout, c_entr, gtruth, soft_labels, num_ind_0, num_ind_1, statesdata, objectposdata = sess.run([
+                                                                model.image_0,
+                                                                model.image_1,
+                                                                model.softmax_output,
+                                                                model.cross_entropy,
+                                                                model.hard_labels,
+                                                                model.soft_labels,
+                                                                model.num_ind_0,
+                                                                model.num_ind_1,
+                                                                states,
+                                                                objectpos
+                                                                ],
+                                                                feed_dict)
+
+    print 'num_ind_0', num_ind_0
+    print 'num_ind_1', num_ind_1
+
     n_examples = 8
+    fig = plt.figure(figsize=(n_examples*2+4, 13), dpi=80)
 
     for ind in range(n_examples):
         ax = fig.add_subplot(3, n_examples, ind+1)
@@ -354,17 +373,7 @@ def visualize(conf, sess, saver, model):
         ax.imshow((im1[ind]*255).astype(np.uint8))
         plt.axis('off')
 
-
-        # visualize dadx0
-        ax = fig.add_subplot(3, n_examples, n_examples*2 + 1 + ind)
-        plt.imshow(dadx0[ind], zorder=0, cmap=plt.get_cmap('jet'), interpolation='none')
-        plt.axis('off')
-        # visualize dadx1
-        ax = fig.add_subplot(3, n_examples, n_examples*3 + 1 + ind)
-        plt.imshow(dadx1[ind], zorder=0, cmap=plt.get_cmap('jet'), interpolation='none')
-        plt.axis('off')
-
-        ax = fig.add_subplot(3, n_examples, n_examples*4 +ind +1)
+        ax = fig.add_subplot(3, n_examples, n_examples*2 +ind +1)
 
         N = conf['sequence_length'] -1
         values = softout[ind]
@@ -379,21 +388,35 @@ def visualize(conf, sess, saver, model):
         ax.set_xticks(loc + width / 2)
         ax.set_xticklabels([str(j+1) for j in range(N)])
 
-        centr = 0.
+        check_centr = 0.
         for i in range(N):
             if gtruth[ind] == i:
                 l = 1
             else:
                 l = 0
-            centr += np.log(softout[ind,i])*l + (1-l)* np.log(1- softout[ind,i])
-        centr = -centr
+            check_centr += np.log(softout[ind,i])*l + (1-l)* np.log(1- softout[ind,i])
+        check_centr = -check_centr
 
         if 'soft_labels' in conf:
             print 'softlabel {0}, gtrut {1}'.format(soft_labels[ind], gtruth[ind])
 
 
-        ax.set_xlabel('true temp distance: {0} \n  cross-entropy: {1}\n self-calc centr: {2}'
-                      .format(gtruth[ind], round(c_entr[ind], 3), round(centr, 3)))
+        ax.set_xlabel('true temp distance: {0} \n  cross-entropy: {1}\n self-calc centr: {2} \n ind0: {3} \n ind1: {4}'
+                      .format(gtruth[ind], round(c_entr[ind], 3), round(check_centr, 3), num_ind_0[ind,1], num_ind_1[ind,1]))
+
+        print 'ex {0} ratio {1}'.format(ind,c_entr[ind]/check_centr)
+
+
+    #compute correlation coeffecients:
+
+    # expected_dist = softout *range(conf['sequence_length'] -1)
+    # obj_diff = objectposdata[num_ind_1,:2] - objectposdata[num_ind_0,:2]
+    # objectdiff_dist = np.stack([obj_diff, expected_dist], axis=1)
+    # print 'states-predicted distance cov:',np.cov(objectdiff_dist, rowvar=False, bias=False)
+    #
+    # states_diff = statesdata[num_ind_1, :2] - statesdata[num_ind_0, :2]
+    # statesdiff_dist = np.stack([states_diff, expected_dist], axis=1)
+    # print '-predicted distance cov:',np.cov(statesdiff_dist, rowvar=False, bias=False)
 
     # plt.tight_layout(pad=0.8, w_pad=0.8, h_pad=1.0)
     plt.savefig(conf['output_dir'] + '/fig.png')

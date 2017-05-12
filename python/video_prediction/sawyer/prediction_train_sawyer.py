@@ -58,33 +58,7 @@ def mean_squared_error(true, pred):
     return tf.reduce_sum(tf.square(true - pred)) / tf.to_float(tf.size(pred))
 
 
-def fft_cost(true, pred, conf, fft_weights = None):
 
-    #loop over the color channels:
-    cost = 0.
-    true_fft_abssum = 0
-    pred_fft_abssum = 0
-    for i in range(3):
-
-        slice_true = tf.slice(true,[0,0,0,i],[-1,-1,-1,1])
-        slice_pred = tf.slice(pred, [0, 0, 0, i], [-1, -1, -1, 1])
-
-        slice_true = tf.squeeze(tf.complex(slice_true, tf.zeros_like(slice_true)))
-        slice_pred = tf.squeeze(tf.complex(slice_pred, tf.zeros_like(slice_pred)))
-
-        true_fft = tf.fft2d(slice_true)
-        pred_fft = tf.fft2d(slice_pred)
-
-        if 'fft_emph_highfreq' in conf:
-            abs_diff = tf.mul(tf.complex_abs(true_fft - pred_fft), fft_weights)
-            cost += tf.reduce_sum(tf.square(abs_diff)) / tf.to_float(tf.size(pred_fft))
-        else:
-            cost += tf.reduce_sum(tf.square(tf.complex_abs(true_fft - pred_fft))) / tf.to_float(tf.size(pred_fft))
-
-        true_fft_abssum += tf.complex_abs(true_fft)
-        pred_fft_abssum += tf.complex_abs(pred_fft)
-
-    return cost, true_fft_abssum, pred_fft_abssum
 
 class Model(object):
     def __init__(self,
@@ -95,10 +69,12 @@ class Model(object):
                  reuse_scope=None,
                  pix_distrib=None):
 
-
+        self.conf = conf
         from prediction_model_sawyer import construct_model
 
-        sequence_length = conf['sequence_length']
+        if 'use_length' in conf:
+            #randomly shift videos for data augmentation
+            images, actions, states = self.random_shift(images, actions, states)
 
         self.prefix = prefix = tf.placeholder(tf.string, [])
         self.iter_num = tf.placeholder(tf.float32, [])
@@ -157,25 +133,11 @@ class Model(object):
                 tf.scalar_summary(prefix + '_recon_cost' + str(i), recon_cost_mse))
             summaries.append(tf.scalar_summary(prefix + '_psnr' + str(i), psnr_i))
 
-            if 'fftcost' in conf:
-                print 'using fftcost'
-                fftcost, true_fft, pred_fft = fft_cost(x, gx, conf, self.fft_weights)
-                true_fft_list.append(true_fft)
-                pred_fft_list.append(pred_fft)
-                summaries.append(
-                    tf.scalar_summary(prefix + '_fft_recon_cost' + str(i), fftcost))
-
-                if 'fftonly' in conf:
-                    print 'only using fft cost'
-                    recon_cost = fftcost
-                else:
-                    recon_cost = fftcost + recon_cost_mse
-            else:
-                recon_cost = recon_cost_mse
+            recon_cost = recon_cost_mse
 
             loss += recon_cost
 
-        if 'ignore_state_action' not in conf:
+        if ('ignore_state_action' not in conf) and ('ignore_state' not in conf):
             for i, state, gen_state in zip(
                     range(len(gen_states)), states[conf['context_frames']:],
                     gen_states[conf['context_frames'] - 1:]):
@@ -203,6 +165,19 @@ class Model(object):
         self.gen_distrib = gen_distrib
         self.gen_states = gen_states
 
+    def random_shift(self, images, states, actions):
+        print 'shifting the video sequence randomly in time'
+        tshift = 2
+        uselen = self.conf['use_len']
+        fulllength = self.conf['sequence_length']
+        nshifts = (fulllength - uselen) / 2 + 1
+        rand_ind = np.random.randint(0, nshifts + 1, size=[1])  # sample from [0,8]
+        images = tf.slice(images, [0, rand_ind * tshift, 0, 0, 0], [-1, uselen, -1, -1, -1])
+        actions = tf.slice(actions, [0, rand_ind * tshift, 0], [-1, uselen, -1])
+        states = tf.slice(states, [0, rand_ind * tshift, 0], [-1, uselen, -1])
+
+        return images, states, actions
+
 
 
 def main(unused_argv, conf_script= None):
@@ -222,25 +197,31 @@ def main(unused_argv, conf_script= None):
     if FLAGS.visualize:
         print 'creating visualizations ...'
         conf = adapt_params_visualize(conf, FLAGS.visualize)
-    print '-------------------------------------------------------------------'
-    print 'verify current settings!! '
-    for key in conf.keys():
-        print key, ': ', conf[key]
-    print '-------------------------------------------------------------------'
+        conf['visual_file'] = conf['data_dir'] + '/traj_0_to_255.tfrecords'
+
 
     print 'Constructing models and inputs.'
     with tf.variable_scope('model', reuse=None) as training_scope:
         if 'sawyer' in conf:
-            images_main, images_aux1, actions, states = build_tfrecord_input(conf, training=True)
-            images_aux1 = tf.squeeze(images_aux1)
-            images = tf.concat(4, [images_main, images_aux1])
+
+            if 'single_view' in conf:
+                images_aux1, actions, states = build_tfrecord_input(conf, training=True)
+                images = images_aux1
+            else:
+                images_main, images_aux1, actions, states = build_tfrecord_input(conf, training=True)
+                images_aux1 = tf.squeeze(images_aux1)
+                images = tf.concat(4, [images_main, images_aux1])
             model = Model(conf, images, actions, states)
 
     with tf.variable_scope('val_model', reuse=None):
         if 'sawyer' in conf:
-            val_images_main, val_images_aux1, val_actions, val_states = build_tfrecord_input(conf, training=False)
-            val_images_aux1 = tf.squeeze(val_images_aux1)
-            val_images = tf.concat(4, [val_images_main, val_images_aux1])
+            if 'single_view' in conf:
+                val_images_aux1, val_actions, val_states = build_tfrecord_input(conf, training=False)
+                val_images = val_images_aux1
+            else:
+                val_images_main, val_images_aux1, val_actions, val_states = build_tfrecord_input(conf, training=False)
+                val_images_aux1 = tf.squeeze(val_images_aux1)
+                val_images = tf.concat(4, [val_images_main, val_images_aux1])
             val_model = Model(conf, val_images, val_actions, val_states, training_scope)
 
     print 'Constructing saver.'
@@ -257,6 +238,13 @@ def main(unused_argv, conf_script= None):
     sess.run(tf.initialize_all_variables())
 
     if conf['visualize']:
+        print '-------------------------------------------------------------------'
+        print 'verify current settings!! '
+        for key in conf.keys():
+            print key, ': ', conf[key]
+        print '-------------------------------------------------------------------'
+
+
         saver.restore(sess, conf['visualize'])
 
         feed_dict = {val_model.lr: 0.0,
@@ -295,6 +283,12 @@ def main(unused_argv, conf_script= None):
         itr_0 = re.match('.*?([0-9]+)$', conf['pretrained_model']).group(1)
         itr_0 = int(itr_0)
         print 'resuming training at iteration:  ', itr_0
+
+    print '-------------------------------------------------------------------'
+    print 'verify current settings!! '
+    for key in conf.keys():
+        print key, ': ', conf[key]
+    print '-------------------------------------------------------------------'
 
     tf.logging.info('iteration number, cost')
 

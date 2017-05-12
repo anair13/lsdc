@@ -39,11 +39,6 @@ class AgentMuJoCo(Agent):
         self._model= mujoco_py.MjModel(filename)
         self.model_nomarkers = mujoco_py.MjModel(self._hyperparams['filename_nomarkers'])
 
-         # changes here:
-        # self._joint_idx = range(self._hyperparams['joint_angles'])
-        # self._vel_idx = range( self._hyperparams['joint_angles'], self._hyperparams['joint_velocities'] + self._hyperparams['joint_angles'])
-
-
         gofast = False
         self._small_viewer = mujoco_py.MjViewer(visible=True,
                                                 init_width=self._hyperparams['image_width'],
@@ -63,9 +58,34 @@ class AgentMuJoCo(Agent):
         about the trial.
         """
 
+        traj_ok = False
+        i_trial = 0
+        imax = 100
+        while not traj_ok and i_trial < imax:
+            i_trial += 1
+            traj_ok, traj = self.rollout(policy)
+        print 'needed {} trials'.format(i_trial)
+
+        tfinal = self._hyperparams['T'] -1
+        if not self._hyperparams['data_collection']:
+            if 'use_goalimage' in self._hyperparams:
+                self.final_poscost, self.final_anglecost = self.eval_action(traj, tfinal, getanglecost=True)
+            else:
+                self.final_poscost = self.eval_action(traj, tfinal)
+
+        if 'save_goal_image' in self._hyperparams:
+            self.save_goal_image_conf(traj)
+
+        if not 'novideo' in self._hyperparams:
+            self.save_gif()
+
+        policy.finish()
+
+        return traj
+
+    def rollout(self, policy):
         # Create new sample, populate first time step.
         self._init()
-
         traj = Trajectory(self._hyperparams)
 
         self._small_viewer.set_model(self.model_nomarkers)
@@ -77,7 +97,7 @@ class AgentMuJoCo(Agent):
         # apply action of zero for the first few steps, to let the scene settle
         for t in range(self._hyperparams['skip_first']):
             for _ in range(self._hyperparams['substeps']):
-                self._model.data.ctrl = np.array([0. ,0.])
+                self._model.data.ctrl = np.array([0., 0.])
                 self._model.step()
 
         self.large_images_traj = []
@@ -88,9 +108,11 @@ class AgentMuJoCo(Agent):
 
             traj.X_full[t, :] = self._model.data.qpos[:2].squeeze()
             traj.Xdot_full[t, :] = self._model.data.qvel[:2].squeeze()
-            traj.X_Xdot_full[t, :] =  np.concatenate([traj.X_full[t, :], traj.Xdot_full[t, :]])
+            traj.X_Xdot_full[t, :] = np.concatenate([traj.X_full[t, :], traj.Xdot_full[t, :]])
             for i in range(self._hyperparams['num_objects']):
-                traj.Object_pos[t,i,:] = self._model.data.qpos[i*7+2:i*7+9].squeeze()
+                fullpose = self._model.data.qpos[i * 7 + 2:i * 7 + 9].squeeze()
+                zangle = self.quat_to_zangle(fullpose[3:])
+                traj.Object_pos[t, i, :] = np.concatenate([fullpose[:2], zangle])
 
             if not self._hyperparams['data_collection']:
                 traj.score[t] = self.eval_action(traj, t)
@@ -98,11 +120,11 @@ class AgentMuJoCo(Agent):
             self._store_image(t, traj, policy)
 
             if self._hyperparams['data_collection'] or 'random_baseline' in self._hyperparams:
-                mj_U, target_inc = policy.act(traj.X_full[t, :], traj.Xdot_full[t, :], traj._sample_images, t)
+                mj_U, target_inc = policy.act(traj, t)
             else:
-                mj_U, pos, ind, targets = policy.act(traj.X_full, traj.Xdot_full, traj._sample_images, t, init_model=self._model)
+                mj_U, pos, ind, targets = policy.act(traj, t, init_model=self._model)
 
-                traj.desig_pos[t,:] = self._model.data.site_xpos[0, :2]
+                traj.desig_pos[t, :] = self._model.data.site_xpos[0, :2]
 
                 if self._hyperparams['add_traj']:  # whether to add visuals for trajectory
                     self.large_images_traj += self.add_traj_visual(self.large_images[t], pos, ind, targets)
@@ -117,32 +139,33 @@ class AgentMuJoCo(Agent):
                 accum_touch += self._model.data.sensordata
 
                 if 'vellimit' in self._hyperparams:
-                    #calculate constraint enforcing force..
+                    # calculate constraint enforcing force..
                     c_force = self.enforce(self._model)
                     mj_U += c_force
-
                 self._model.data.ctrl = mj_U
-                self._model.step()    #simulate the model in mujoco
+                self._model.step()  # simulate the model in mujoco
 
-            traj.touchdata[t, :] = accum_touch.squeeze()
-            print 'accumulated force', t
-            print accum_touch
+            if 'touch' in self._hyperparams:
+                traj.touchdata[t, :] = accum_touch.squeeze()
+                print 'accumulated force', t
+                print accum_touch
 
-        if not self._hyperparams['data_collection']:
-            if 'use_goalimage' in self._hyperparams:
-                self.final_poscost, self.final_anglecost = self.eval_action(traj, t, getanglecost=True)
+        # only save trajectories which displace objects above threshold
+        if 'displacement_threshold' in self._hyperparams:
+            assert self._hyperparams['data_collection']
+            disp_per_object = np.zeros(self._hyperparams['num_objects'])
+            for i in range(self._hyperparams['num_objects']):
+                pos_old = traj.Object_pos[0, i, :2]
+                pos_new = traj.Object_pos[t, i, :2]
+                disp_per_object[i] = np.linalg.norm(pos_old - pos_new)
+
+            if np.sum(disp_per_object) > self._hyperparams['displacement_threshold']:
+                traj_ok = True
             else:
-                self.final_poscost = self.eval_action(traj, t)
-
-        if 'save_goal_image' in self._hyperparams:
-            self.save_goal_image_conf(traj)
-
-        if self._hyperparams['record']:
-            self.save_gif()
-
-        policy.finish()
-
-        return traj
+                traj_ok = False
+        else:
+            traj_ok = True
+        return traj_ok, traj
 
     def save_goal_image_conf(self, traj):
         div = .05
@@ -181,10 +204,9 @@ class AgentMuJoCo(Agent):
             goalpos = self._hyperparams['goal_object_pose'][0][0:2]
             goal_quat= self._hyperparams['goal_object_pose'][0][3:]
             curr_pos = traj.Object_pos[t, 0, 0:2]
-            curr_quat = traj.Object_pos[t, 0, 3:]
 
             goalangle = self.quat_to_zangle(goal_quat)
-            currangle = self.quat_to_zangle(curr_quat)
+            currangle = traj.Object_pos[t, 0, 2]
             anglediff = self.calc_anglediff(goalangle, currangle)
             mult = 0.01 #0.1
             anglecost = np.abs(anglediff) / np.pi *180 * mult
@@ -205,8 +227,12 @@ class AgentMuJoCo(Agent):
         return np.array([np.cos(zangle/2), 0, 0, np.sin(zangle/2) ])
 
     def quat_to_zangle(self, quat):
+        """
+        :param quat: quaternion 
+        :return: zangle in rad
+        """
         theta = np.arctan2(2*quat[0]*quat[3], 1-2*quat[3]**2)
-        return theta
+        return np.array([theta])
 
     def calc_anglediff(self, alpha, beta):
         delta = alpha - beta
@@ -336,11 +362,15 @@ class AgentMuJoCo(Agent):
             object_pos= create_pos()
 
         # Initialize world/run kinematics
-        x0 = self._hyperparams['x0']
+        if 'randomize_ballinitpos' in self._hyperparams:
+            x0 = np.random.uniform(-.35, .35, 2)
+        else:
+            x0 = self._hyperparams['x0']
         if 'goal_point' in self._hyperparams.keys():
             goal = np.append(self._hyperparams['goal_point'], [.1])   # goal point
             ref = np.append(object_pos[:2], [.1]) # reference point on the block
             self._model.data.qpos = np.concatenate((x0[:2], object_pos,goal, ref), 0)
         else:
             self._model.data.qpos = np.concatenate((x0[:2], object_pos), 0)
+            pdb.set_trace()
         self._model.data.qvel = np.zeros_like(self._model.data.qvel)

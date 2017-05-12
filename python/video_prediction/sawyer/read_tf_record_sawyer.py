@@ -57,18 +57,21 @@ def build_tfrecord_input(conf, training=True):
     print 'using frame sequence: ', load_indx
 
     for i in load_indx:
-        image_main_name = str(i) + '/image_main/encoded'
+        if 'single_view' not in conf:
+            image_main_name = str(i) + '/image_main/encoded'
         image_aux1_name = str(i) + '/image_aux1/encoded'
         action_name = str(i) + '/action'
         endeffector_pos_name = str(i) + '/endeffector_pos'
         # state_name = 'move/' +str(i) + '/state'
 
         features = {
-                    image_main_name: tf.FixedLenFeature([1], tf.string),
+
                     image_aux1_name: tf.FixedLenFeature([1], tf.string),
                     action_name: tf.FixedLenFeature([ACION_DIM], tf.float32),
                     endeffector_pos_name: tf.FixedLenFeature([STATE_DIM], tf.float32),
         }
+        if 'single_view' not in conf:
+            (features[image_main_name]) = tf.FixedLenFeature([1], tf.string)
 
         features = tf.parse_single_example(serialized_example, features=features)
 
@@ -84,18 +87,20 @@ def build_tfrecord_input(conf, training=True):
             IMG_WIDTH = 64
             IMG_HEIGHT = 64
 
+        if 'single_view' not in conf:
+            image = tf.decode_raw(features[image_main_name], tf.uint8)
+            image = tf.reshape(image, shape=[1,ORIGINAL_HEIGHT*ORIGINAL_WIDTH*COLOR_CHAN])
+            image = tf.reshape(image, shape=[ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN])
+            if IMG_HEIGHT != IMG_WIDTH:
+                raise ValueError('Unequal height and width unsupported')
+            crop_size = min(ORIGINAL_HEIGHT, ORIGINAL_WIDTH)
+            image = tf.image.resize_image_with_crop_or_pad(image, crop_size, crop_size)
+            image = tf.reshape(image, [1, crop_size, crop_size, COLOR_CHAN])
+            image = tf.image.resize_bicubic(image, [IMG_HEIGHT, IMG_WIDTH])
+            image = tf.cast(image, tf.float32) / 255.0
+            image_main_seq.append(image)
 
-        image = tf.decode_raw(features[image_main_name], tf.uint8)
-        image = tf.reshape(image, shape=[1,ORIGINAL_HEIGHT*ORIGINAL_WIDTH*COLOR_CHAN])
-        image = tf.reshape(image, shape=[ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN])
-        if IMG_HEIGHT != IMG_WIDTH:
-            raise ValueError('Unequal height and width unsupported')
-        crop_size = min(ORIGINAL_HEIGHT, ORIGINAL_WIDTH)
-        image = tf.image.resize_image_with_crop_or_pad(image, crop_size, crop_size)
-        image = tf.reshape(image, [1, crop_size, crop_size, COLOR_CHAN])
-        image = tf.image.resize_bicubic(image, [IMG_HEIGHT, IMG_WIDTH])
-        image = tf.cast(image, tf.float32) / 255.0
-        image_main_seq.append(image)
+
 
         image = tf.decode_raw(features[image_aux1_name], tf.uint8)
         image = tf.reshape(image, shape=[1, ORIGINAL_HEIGHT * ORIGINAL_WIDTH * COLOR_CHAN])
@@ -114,7 +119,9 @@ def build_tfrecord_input(conf, training=True):
         action = tf.reshape(features[action_name], shape=[1, ACION_DIM])
         action_seq.append(action)
 
-    image_main_seq = tf.concat(0, image_main_seq)
+    if 'single_view' not in conf:
+        image_main_seq = tf.concat(0, image_main_seq)
+    image_aux1_seq = tf.concat(0, image_aux1_seq)
 
     if conf['visualize']: num_threads = 1
     else: num_threads = np.min((conf['batch_size'], 32))
@@ -127,6 +134,15 @@ def build_tfrecord_input(conf, training=True):
                                     capacity=100 * conf['batch_size'])
         return image_main_batch, image_aux1_batch, None, None
 
+    elif 'single_view' in conf:
+        endeffector_pos_seq = tf.concat(0, endeffector_pos_seq)
+        action_seq = tf.concat(0, action_seq)
+        [image_aux1_batch, action_batch, endeffector_pos_batch] = tf.train.batch(
+            [image_aux1_seq, action_seq, endeffector_pos_seq],
+            conf['batch_size'],
+            num_threads=num_threads,
+            capacity=100 * conf['batch_size'])
+        return image_aux1_batch, action_batch, endeffector_pos_batch
     else:
         endeffector_pos_seq = tf.concat(0, endeffector_pos_seq)
         action_seq = tf.concat(0, action_seq)
@@ -254,7 +270,7 @@ if __name__ == '__main__':
     print 'using CUDA_VISIBLE_DEVICES=', os.environ["CUDA_VISIBLE_DEVICES"]
     conf = {}
 
-    DATA_DIR = '/home/frederik/Documents/lsdc/pushing_data/sawyer_noup_29/train'
+    DATA_DIR = '/home/frederik/Documents/lsdc/pushing_data/softmotion15/train'
 
     conf['schedsamp_k'] = -1  # don't feed ground truth
     conf['data_dir'] = DATA_DIR  # 'directory containing data_files.' ,
@@ -263,7 +279,7 @@ if __name__ == '__main__':
     conf['sequence_length']= 15      # 'sequence length, including context frames.'
     conf['use_state'] = True
     conf['batch_size']= 32
-    conf['visualize']=True
+    conf['visualize']= False
     conf['visual_file'] = '/home/frederik/Documents/lsdc/pushing_data/sawyer_noup_29/train/traj_0_to_255.tfrecords'
     conf['use_object_pos'] = True
 
@@ -275,7 +291,7 @@ if __name__ == '__main__':
 
     print 'testing the reader'
 
-    image_main_batch, image_aux_batch, _, _  = build_tfrecord_input(conf, training=False)
+    image_main_batch, image_aux_batch, action_batch, endeff_pos_batch  = build_tfrecord_input(conf, training=False)
 
     sess = tf.InteractiveSession()
     tf.train.start_queue_runners(sess)
@@ -285,10 +301,14 @@ if __name__ == '__main__':
     for i in range(1):
         print 'run number ', i
 
-        image_main, image_aux= sess.run([image_main_batch, image_aux_batch])
+        image_main, image_aux, actions, endeff = sess.run([image_main_batch, image_aux_batch, action_batch, endeff_pos_batch])
 
         # show some frames
-        for i in range(2):
+
+        for i in range(3):
+
+            print actions[i]
+            print endeff[i]
 
             img = np.uint8(255. *image_main[0, i])
             img = Image.fromarray(img, 'RGB')

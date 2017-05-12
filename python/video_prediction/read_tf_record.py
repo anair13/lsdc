@@ -14,7 +14,9 @@ import imp
 # Dimension of the state and action.
 STATE_DIM = 4
 ACION_DIM = 2
-OBJECT_POS_DIM = 8
+OBJECT_POS_DIM = 3
+
+from utils_vpred.create_gif import comp_single_video
 
 
 def build_tfrecord_input(conf, training=True, gtruth_pred = False):
@@ -42,7 +44,11 @@ def build_tfrecord_input(conf, training=True, gtruth_pred = False):
         filenames = filenames[index:]
 
     if conf['visualize']:
-        filenames = [conf['visual_file']]
+        if isinstance(conf['visual_file'], list):
+            filenames = conf['visual_file']
+        else:
+            filenames = [conf['visual_file']]
+
         print 'using input file', filenames
         shuffle = False
     else: shuffle = True
@@ -79,8 +85,7 @@ def build_tfrecord_input(conf, training=True, gtruth_pred = False):
                         state_name: tf.FixedLenFeature([STATE_DIM], tf.float32)
             }
         if 'use_object_pos' in conf.keys():
-            if conf['use_object_pos']:
-                features[object_pos_name] = tf.FixedLenFeature([OBJECT_POS_DIM], tf.float32)
+            features[object_pos_name] = tf.FixedLenFeature([OBJECT_POS_DIM], tf.float32)
 
         if conf['touch']:
             touchdata_name = 'touchdata/' + str(i)
@@ -106,11 +111,9 @@ def build_tfrecord_input(conf, training=True, gtruth_pred = False):
                 touchdata = tf.reshape(features[touchdata_name], shape=[1, TOUCH_DIM])
                 touch_seq.append(touchdata)
 
-
             if 'use_object_pos' in conf.keys():
-                if conf['use_object_pos']:
-                    object_pos = tf.reshape(features[object_pos_name], shape=[1, OBJECT_POS_DIM])
-                    object_pos_seq.append(object_pos)
+                object_pos = tf.reshape(features[object_pos_name], shape=[1, OBJECT_POS_DIM])
+                object_pos_seq.append(object_pos)
 
     if gtruth_pred:
         gtruthimage_seq = tf.concat(0, gtruthimage_seq)
@@ -135,18 +138,17 @@ def build_tfrecord_input(conf, training=True, gtruth_pred = False):
 
         state_seq = tf.concat(0, state_seq)
         action_seq = tf.concat(0, action_seq)
+
         if conf['touch']:
             touch_seq = tf.concat(0, touch_seq)
 
         if 'use_object_pos' in conf.keys():
-            if conf['use_object_pos']:
-                [image_batch, action_batch, state_batch, object_pos_batch] = tf.train.batch(
-                [image_seq, action_seq, state_seq, object_pos_seq],
-                conf['batch_size'],
-                num_threads=num_threads,
-                capacity=100 * conf['batch_size'])
-
-                return image_batch, action_batch, state_batch, object_pos_batch
+            [image_batch, action_batch, state_batch, object_pos_batch] = tf.train.batch(
+            [image_seq, action_seq, state_seq, object_pos_seq],
+            conf['batch_size'],
+            num_threads=num_threads,
+            capacity=100 * conf['batch_size'])
+            return image_batch, action_batch, state_batch, object_pos_batch
         elif conf['touch']:
             [image_batch, action_batch, state_batch, touch_batch] = tf.train.batch(
                 [image_seq, action_seq, state_seq, touch_seq],
@@ -202,9 +204,10 @@ def add_visuals_to_batch(image_data, action_data, state_data, action_pos = False
     for b in range(batchsize):
         for t in range(sequence_length):
             actions = action_data[b, t]
-            state = state_data[b, t, :2]
+            state = state_data[b, t]
             sel_img = img[b,t]
-            image__with_visuals[b, t] = get_frame_with_visual(sel_img, actions, state, action_pos= action_pos)
+            image__with_visuals[b, t] = get_frame_with_posdata(sel_img, state)
+            # image__with_visuals[b, t] = get_frame_with_visual(sel_img, actions, state, action_pos= action_pos)
 
     return image__with_visuals.astype(np.float32) / 255.0
 
@@ -218,7 +221,9 @@ def get_frame_with_posdata(img, pos):
     :param action_pos:
     :return:
     """
-    pos = pos.squeeze().reshape(4,2)
+
+    numobjects = 1
+    pos = pos.reshape(numobjects,3)
 
     fig = plt.figure(figsize=(1, 1), dpi=64)
     fig.add_subplot(111)
@@ -230,9 +235,16 @@ def get_frame_with_posdata(img, pos):
     plt.imshow(img, zorder=0)
     axes.autoscale(False)
 
-    for i in range(4):
-        pos_img = mujoco_to_imagespace(pos[i])
+
+    for i in range(numobjects):
+        arrow_end = pos[i,:2] + np.array([np.cos(pos[i,2]),np.sin(pos[i,2])])*.15
+        arrow_end = mujoco_to_imagespace(arrow_end)
+        pos_img = mujoco_to_imagespace(pos[i,:2])
         plt.plot(pos_img[1], pos_img[0], zorder=1, marker='o', color='b')
+
+        yaction = np.array([pos_img[0], arrow_end[0]])
+        xaction = np.array([pos_img[1], arrow_end[1]])
+        plt.plot(xaction, yaction, zorder=1, color='y', linewidth=3)
 
     fig.canvas.draw()  # draw the canvas, cache the renderer
 
@@ -240,8 +252,8 @@ def get_frame_with_posdata(img, pos):
     data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
 
     # plt.show()
-    Image.fromarray(data).show()
-    pdb.set_trace()
+    # Image.fromarray(data).show()
+    # pdb.set_trace()
 
     return data
 
@@ -315,8 +327,10 @@ if __name__ == '__main__':
     conf['train_val_split']= 0.95
     conf['sequence_length']= 15      # 'sequence length, including context frames.'
     conf['use_state'] = True
-    conf['batch_size']= 5
+    conf['batch_size']= 32
     conf['visualize']=False
+
+    conf['use_object_pos'] =''
 
 
     print '-------------------------------------------------------------------'
@@ -327,16 +341,19 @@ if __name__ == '__main__':
 
     # both ground truth and predicted images in data:
     gtruth_pred = False
-    touch = True
+    touch = False
 
     print 'testing the reader'
+
     if gtruth_pred:
         gtruth_image_batch, pred_image_batch  = build_tfrecord_input(conf, training=True, gtruth_pred= gtruth_pred)
     elif touch:
         conf['touch'] = '1'
         image_batch, action_batch, state_batch, touch_batch = build_tfrecord_input(conf, training=True)
+    elif 'use_object_pos' in conf:
+        image_batch, action_batch, state_batch, pos_batch = build_tfrecord_input(conf, training=True)
     else:
-        image_batch, action_batch, state_batch = build_tfrecord_input(conf, training=True, gtruth_pred=True)
+        image_batch, action_batch, state_batch = build_tfrecord_input(conf, training=True,gtruth_pred= gtruth_pred)
     sess = tf.InteractiveSession()
     tf.train.start_queue_runners(sess)
     sess.run(tf.initialize_all_variables())
@@ -351,10 +368,20 @@ if __name__ == '__main__':
                                                                         action_batch,
                                                                         state_batch,
                                                                         touch_batch])
+        elif 'use_object_pos' in conf:
+            image_data, action_data, state_data, pos_data = sess.run([image_batch, action_batch, state_batch, pos_batch])
         else:
             image_data, action_data, state_data = sess.run([image_batch, action_batch, state_batch])
 
 
+        print 'action:', action_data.shape
+        print 'action: batch ind 0', action_data[0]
+        print 'action: batch ind 1', action_data[1]
+
+        pos_data = np.squeeze(pos_data)
+        print 'pos:', pos_data.shape
+        print 'pos: batch ind 0', pos_data[0]
+        print 'pos: batch ind 1', pos_data[1]
 
         print 'action:', action_data.shape
         print 'action: batch ind 0', action_data[0]
@@ -367,9 +394,9 @@ if __name__ == '__main__':
         print 'average speed in dir1:', np.average(state_data[:,:,3])
         print 'average speed in dir2:', np.average(state_data[:,:,2])
 
-        print 'touchdata:', touch_data.shape
-        print 'touch_data: batch ind 0', touch_data[0]
-        print 'touch_data: batch ind 1', touch_data[1]
+        # print 'touchdata:', touch_data.shape
+        # print 'touch_data: batch ind 0', touch_data[0]
+        # print 'touch_data: batch ind 1', touch_data[1]
 
 
         # import pdb;pdb.set_trace()
@@ -382,11 +409,20 @@ if __name__ == '__main__':
         # print 'state variance of single batch'
         # print pos_var
 
+        pos_data = np.squeeze(pos_data)
 
-        from utils_vpred.create_gif import comp_single_video
+        giffile = '/'.join(str.split(conf['data_dir'], '/')[:-2] + ['video'])
+        comp_single_video(giffile, image_data, num_exp=32)
+        pdb.set_trace()
+        visual_batch = add_visuals_to_batch(image_data, action_data, pos_data)
+        giffile = '/'.join(str.split(conf['data_dir'], '/')[:-2] + ['video_with_pos'])
+        comp_single_video(giffile, visual_batch, num_exp=10)
+
+        pdb.set_trace()
+
 
         # make video preview video
-        gif_preview = '/'.join(str.split(__file__, '/')[:-1] + ['preview'])
+        gif_preview = '/'.join(str.split(__file__, '/')[:-2] + ['preview'])
         if gtruth_pred:
             comp_single_video(gif_preview, gtruth_data, predicted=pred_data, num_exp=conf['batch_size'])
         else:

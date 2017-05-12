@@ -9,7 +9,7 @@ import copy
 import time
 import imp
 import cPickle
-from video_prediction.utils_vpred.create_gif import comp_video
+from video_prediction.utils_vpred.create_gif import *
 from datetime import datetime
 
 from PIL import Image
@@ -31,7 +31,10 @@ class CEM_controller(Policy):
         if self.policyparams['low_level_ctrl']:
             self.low_level_ctrl = policyparams['low_level_ctrl']['type'](None, policyparams['low_level_ctrl'])
 
-        self.model = mujoco_py.MjModel(self.agentparams['filename'])
+        if 'mujoco_with_rewardnet' in policyparams:
+            self.model = mujoco_py.MjModel(self.agentparams['filename_nomarkers'])
+        else:
+            self.model = mujoco_py.MjModel(self.agentparams['filename'])
 
         if 'verbose' in self.policyparams:
             self.verbose = True
@@ -60,6 +63,7 @@ class CEM_controller(Policy):
             self.predictor = predictor
         else:
             self.M = self.policyparams['num_samples']
+            self.pred_len = self.nactions * self.repeat
 
         self.K = 10  # only consider K best samples for refitting
 
@@ -119,7 +123,6 @@ class CEM_controller(Policy):
 
         self.target = np.zeros(2)
 
-
     def finish(self):
         self.small_viewer.finish()
         self.viewer.finish()
@@ -169,9 +172,13 @@ class CEM_controller(Policy):
             # import pdb; pdb.set_trace()
 
             if self.verbose or not self.use_net:
+                term_img = []
                 for smp in range(self.M):
                     self.setup_mujoco()
-                    self.sim_rollout(actions[smp], smp, itr)
+                    term_img.append(self.sim_rollout(actions[smp], smp, itr))
+
+                if 'mujoco_with_rewardnet' in self.policyparams:
+                    scores = self.eval_with_rewardnet(term_img, itr)
 
             actions = np.repeat(actions, self.repeat, axis=1)
 
@@ -326,7 +333,7 @@ class CEM_controller(Policy):
         #                                                            np.where(sorted == i)[0][0]))
         #         f.write('action {}\n'.format(actions[i]))
 
-            # pdb.set_trace()
+
             # for i in range(self.K):
             #     bestind = bestindices[i]
             #     goalim  = self.goal_image[selected_scores[bestind]]
@@ -384,7 +391,7 @@ class CEM_controller(Policy):
                     self.model.data.ctrl = force
                     self.model.step()  # simulate the model in mujoco
 
-                if self.verbose:
+                if self.verbose or 'mujoco_with_rewardnet' in self.policyparams:
                     self.viewer.loop_once()
 
                     self.small_viewer.loop_once()
@@ -395,7 +402,54 @@ class CEM_controller(Policy):
                     self.gtruth_states[t][smp] = np.concatenate([self.model.data.qpos[:2].squeeze(),
                                                                 self.model.data.qvel[:2].squeeze()], axis=0)
 
-                    # self.check_conversion()
+        return img
+
+    def eval_with_rewardnet(self, term, itr):
+        term = np.stack(term, axis=0)
+        reward_func = self.policyparams['rewardnet_func']
+
+        term = term.astype(np.float32)/255.
+
+        softmax_out = reward_func(term, self.goal_image)
+        # compute expected number time-steps
+        if 'rewardmodel_sequence_length' in self.policyparams:
+            rewmodel_s_length = self.policyparams['rewardmodel_sequence_length']
+        else:
+            rewmodel_s_length = 15
+        scores = np.sum(softmax_out * np.arange(rewmodel_s_length - 1), axis=1)
+
+        bestindices = scores.argsort()[:self.K]
+
+        if self.verbose and itr == self.policyparams['iterations']-1:
+            # print 'creating visuals for best sampled actions at last iteration...'
+            file_path = self.policyparams['currentdir'] +'/verbose'
+            bestindices = scores.argsort()[:self.K]
+            bestscores = [scores[ind] for ind in bestindices]
+
+            def best(inputlist):
+                outputlist = [np.zeros_like(a)[:self.K] for a in inputlist]
+
+                for ind in range(self.K):
+                    for tstep in range(len(inputlist)):
+                        outputlist[tstep][ind] = inputlist[tstep][bestindices[ind]]
+                return outputlist
+            gtruth_images = best(self.gtruth_images)
+            imlist = assemble_gif([gtruth_images], convert_from_float= False, num_exp=10)
+            npy_to_gif(imlist, file_path + '/check_eval_t{}'.format(self.t))
+
+            Image.fromarray((self.goal_image*255).astype(np.uint8)).show()
+            conc_term = [(term[bestindices[i]]*255).astype(np.uint8) for i in range(self.K)]
+            conc_term = np.concatenate(conc_term, axis=1)
+            Image.fromarray(conc_term).show()
+            Image.fromarray(conc_term).save(file_path + '/last_images_besttraj.png')
+
+            for i in range(self.K):
+                print 'bestscore ', bestscores[i]
+                print 'softmax out', softmax_out[bestindices[i]]
+
+            pdb.set_trace()
+
+        return scores
 
     def check_conversion(self):
         # check conversion
@@ -415,7 +469,7 @@ class CEM_controller(Policy):
         pdb.set_trace()
 
 
-    def act(self, x_full, xdot_full, full_images, t, init_model= None):
+    def act(self, traj, t, init_model= None):
         """
         Return a random action for a state.
         Args:
@@ -432,13 +486,15 @@ class CEM_controller(Policy):
         if t == 0:
             action = np.zeros(2)
             self.target = copy.deepcopy(self.init_model.data.qpos[:2].squeeze())
+            self.get_goalimg()
 
-            self.goal_state = self.inf_goal_state()
+            if 'use_lt_state' in self.policyparams:
+                self.goal_state = self.inf_goal_state()
 
         else:
 
-            last_images = full_images[t-1:t+1]
-            last_states = np.concatenate((x_full,xdot_full), axis = 1)[t-1: t+1]
+            last_images = traj._sample_images[t-1:t+1]
+            last_states = traj.X_Xdot_full[t-1: t+1]
             last_action = self.action_list[-1]
 
             if self.use_first_plan:
@@ -468,10 +524,16 @@ class CEM_controller(Policy):
             if (t-1) % self.repeat == 0:
                 self.target += action
 
-            force = self.low_level_ctrl.act(x_full[t], xdot_full[t], None, t, self.target)
+            force = self.low_level_ctrl.act(traj.X_full[t], traj.Xdot_full[t], None, t, self.target)
 
         return force, self.pred_pos, self.bestindices_of_iter, self.rec_target_pos
 
+
+    def get_goalimg(self):
+        dict = cPickle.load(open(self.policyparams['use_goalimage'], "rb"))
+        goal_image = dict['goal_image']
+        # Image.fromarray(goal_image).show()
+        self.goal_image = goal_image.astype(np.float32) / 255.
 
     def inf_goal_state(self):
 
@@ -480,7 +542,7 @@ class CEM_controller(Policy):
         goal_low_dim_st = dict['goal_ballpos']
 
         if 'ballinvar' not in self.policyparams:
-            Image.fromarray(goal_image).show()
+            # Image.fromarray(goal_image).show()
 
             last_states = np.expand_dims(goal_low_dim_st, axis=0)
             last_states = np.repeat(last_states, 2, axis=0)  # copy over timesteps

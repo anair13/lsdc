@@ -2,7 +2,7 @@ import os
 current_dir = os.path.dirname(os.path.realpath(__file__))
 
 # tf record data location:
-DATA_DIR = '/'.join(str.split(current_dir, '/')[:-3]) + '/experiments/cem_exp/benchmarks_goalimage/make_standard_goal_1e4/tfrecords/train'
+DATA_DIR = '/'.join(str.split(current_dir, '/')[:-3]) + '/experiments/cem_exp/benchmarks_goalimage/pixelerror_store_wholepred/tfrecords/train'
 
 # local output directory
 OUT_DIR = current_dir + '/modeldata'
