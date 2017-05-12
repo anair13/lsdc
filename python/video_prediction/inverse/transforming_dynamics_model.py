@@ -318,7 +318,7 @@ class DynamicsModel(object):
 
         return ret
 
-    def get_f(self, i = None, sess=None):
+    def get_f(self, i = None, sess=None, query=None):
         """Return the network forward function"""
         ret = []
         if not self.sess:
@@ -328,7 +328,8 @@ class DynamicsModel(object):
             if i and not restore: # model requested but not found
                 return None
 
-        query = self.action_preds + self.inputs + self.t_masks + self.img_reconstructions + self.forward_predictions + self.img_features + self.tracking_vars
+        if query is None:
+            query = self.action_preds + self.inputs + self.t_masks + self.img_reconstructions + self.forward_predictions + self.img_features + self.tracking_vars
         def f(feed_dict):
             result = self.sess.run(query, feed_dict)
             d = collections.OrderedDict()

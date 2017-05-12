@@ -16,6 +16,7 @@ new_conf = transforming_dynamics_model.get_conf(
     mu2 = 1e-6,
     mu3 = 1,
     mu5 = 1,
+    run = 1,
     autoencoder = "decode",
     touch = "Wclassify",
     skip_frame = 1,
