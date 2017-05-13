@@ -228,7 +228,7 @@ class AgentMuJoCo(Agent):
 
     def quat_to_zangle(self, quat):
         """
-        :param quat: quaternion 
+        :param quat: quaternion
         :return: zangle in rad
         """
         theta = np.arctan2(2*quat[0]*quat[3], 1-2*quat[3]**2)
@@ -372,5 +372,5 @@ class AgentMuJoCo(Agent):
             self._model.data.qpos = np.concatenate((x0[:2], object_pos,goal, ref), 0)
         else:
             self._model.data.qpos = np.concatenate((x0[:2], object_pos), 0)
-            pdb.set_trace()
+            # pdb.set_trace()
         self._model.data.qvel = np.zeros_like(self._model.data.qvel)
