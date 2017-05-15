@@ -9,7 +9,7 @@ import tensorflow as tf
 
 DATA_DIR = '/home/ashvin/lsdc/pushing_data/large_displacement_touch'
 new_conf = transforming_dynamics_model.get_conf(
-    data = "largedisplacement"
+    data = "largedisplacement",
     data_dir = DATA_DIR,
     experiment_name = "touch",
     transform = "none",
