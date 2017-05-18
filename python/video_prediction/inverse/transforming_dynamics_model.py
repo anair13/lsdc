@@ -82,7 +82,11 @@ class DynamicsModel(object):
         D = lambda x: discretize_actions(x, self.conf['discretize'])
         self.action_batch = tf.py_func(D, [self.raw_action_batch], tf.float32)
 
-        D = lambda x: discretize_touch(x)
+        self.discretizetouch = self.conf.get('discretizetouch', 20)
+        if self.discretizetouch == 1:
+            D = lambda x: discretize_touch_coarse(x)
+        else:
+            D = lambda x: discretize_touch(x)
         self.touch_batch = tf.py_func(D, [self.raw_touch_batch], tf.float32)
 
         self.fsize = self.conf.get('fsize', 100)
@@ -140,7 +144,7 @@ class DynamicsModel(object):
             f2 = self.img_features[i+1]
 
             u = tf.reshape(self.action_batch[:, i, :, :], [-1, 2, self.dsize])
-            T = tf.reshape(self.touch_batch[:, i, :, :], [-1, 20, 1])
+            T = tf.reshape(self.touch_batch[:, i, :, :], [-1, self.discretizetouch, 1])
 
             a = self.action_pred_network(feats + [f2], i != 0)
             l = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(a, u), 1)
@@ -151,7 +155,7 @@ class DynamicsModel(object):
 
             if self.conf.get("touch"):
                 t = self.touch_pred_network(feats + [f2], i != 0)
-                l = tf.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(t, T, 100), 1)
+                l = tf.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(t, T, self.conf.get('touchposweight',1)), 1)
                 c = tf.equal(t > 0.5, T > 0.5)
                 self.correct_touch_predictions.append(tf.cast(c, tf.float32))
                 self.touch_preds.append(t)
@@ -492,8 +496,8 @@ class DynamicsModel(object):
                 activation_fn=tf.nn.elu, reuse=reuse):
                 net = tf.concat(1, fs)
                 net = slim.fully_connected(net, 100, scope='fc_1')
-                net = slim.fully_connected(net, 20, scope='fc_2', activation_fn=None)
-                return tf.reshape(net, [-1, 20, 1])
+                net = slim.fully_connected(net, self.discretizetouch, scope='fc_2', activation_fn=None)
+                return tf.reshape(net, [-1, self.discretizetouch, 1])
 
 
     def forward_pred_network(self, fs, u, reuse=False):
@@ -599,6 +603,8 @@ def get_default_conf():
     conf['miningtemp'] = 0
     conf['initialize'] = 0
     conf['touch'] = 0
+    conf['touchposweight'] = 100
+    conf['discretizetouch'] = 20
     return conf
 
 DEFAULT_CONF = get_default_conf()
@@ -675,5 +681,16 @@ def discretize_touch(x):
         for f in range(frames):
             for a in range(actiondim):
                 X[b, f, a, :] = x[b, f, a] > THRESHOLD
+    return np.float32(X)
+
+THRESHOLD = 1
+def discretize_touch_coarse(x):
+    batches = x.shape[0]
+    frames = x.shape[1]
+    actiondim = x.shape[2]
+    X = np.zeros((batches, frames, 1, 1))
+    for b in range(batches):
+        for f in range(frames):
+            X[b, f, 0, :] = np.sum(x[b, f, :]) > THRESHOLD
     return np.float32(X)
 
