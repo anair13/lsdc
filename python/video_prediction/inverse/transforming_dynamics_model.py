@@ -89,6 +89,10 @@ class DynamicsModel(object):
             D = lambda x: discretize_touch(x)
         self.touch_batch = tf.py_func(D, [self.raw_touch_batch], tf.float32)
 
+        D = lambda x: sample_touch_ratio(x, self.conf["ratiotouch"])
+        self.sample_batch = tf.py_func(D, [self.raw_touch_batch], tf.float32)
+        self.sample_batch = tf.reshape(self.sample_batch, (32, 15))
+
         self.fsize = self.conf.get('fsize', 100)
         self.dsize = self.conf.get('discretize', 20)
         self.batch_size = self.conf['batch_size']
@@ -190,9 +194,14 @@ class DynamicsModel(object):
         mu4 = tf.constant(float(self.conf['mu4'])) if self.conf.get('mu4', None) is not None else tf.constant(0.0)
         mu5 = tf.constant(float(self.conf['mu5'])) if self.conf.get('mu5', None) is not None else tf.constant(0.0)
 
+        for i in range(14):
+            self.forward_losses[i] = self.forward_losses[i] * self.sample_batch[:, i]
+            self.action_losses[i] = self.action_losses[i] * self.sample_batch[:, i]
+            self.touch_losses[i] = self.touch_losses[i] * self.sample_batch[:, i]
         self.forward_loss_batch = add_n(self.forward_losses, 32)
         self.inverse_loss_batch = add_n(self.action_losses, 32)
         self.touch_loss_batch = add_n(self.touch_losses, 32)
+
         self.dynamics_loss_batch = self.inverse_loss_batch + mu2 * self.forward_loss_batch + mu5 * self.touch_loss_batch
         self.action_accuracy = tf.reduce_mean(tf.concat(1, self.correct_action_predictions))
         self.feat_norm_loss = tf.reduce_mean([tf.abs(f) for f in self.img_features])
@@ -605,6 +614,7 @@ def get_default_conf():
     conf['touch'] = 0
     conf['touchposweight'] = 100
     conf['discretizetouch'] = 20
+    conf['ratiotouch'] = None
     return conf
 
 DEFAULT_CONF = get_default_conf()
@@ -682,6 +692,34 @@ def discretize_touch(x):
             for a in range(actiondim):
                 X[b, f, a, :] = x[b, f, a] > THRESHOLD
     return np.float32(X)
+
+def sample_touch_ratio(x, ratio_touch=0.5):
+    """Returns so that p/(p + n) = ratio_touch"""
+    if ratio_touch is None:
+        R = np.ones((batches, frames))
+
+    batches = x.shape[0]
+    frames = x.shape[1]
+    X = np.zeros((batches, frames))
+    for b in range(batches):
+        for f in range(frames):
+            X[b, f] = int(np.sum(x[b, f, :]) > THRESHOLD)
+
+    if ratio_touch == 0: # no touch examples
+        R = 1 - X
+    if ratio_touch == 1:
+        R = X
+    if ratio_touch == 0.5:
+        p = int(np.sum(X)) # num of examples with a touch
+        n = p
+        inds = np.where(X == 0)
+        N = len(inds[0])
+        c = np.random.randint(0, N, (n))
+        chosen_inds = [ind[c] for ind in inds]
+        X[chosen_inds] = 1
+        R = X
+
+    return np.float32(R)
 
 THRESHOLD = 1
 def discretize_touch_coarse(x):
