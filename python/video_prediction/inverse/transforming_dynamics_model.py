@@ -188,6 +188,7 @@ class DynamicsModel(object):
         self.transformer_vars = [var for var in t_vars if 'transformer' in var.name]
 
         seq = self.conf.get('seq', None) if self.conf['seq'] is not None else 0
+        mu0 = tf.constant(float(self.conf['mu0'])) if self.conf.get('mu0', None) is not None else tf.constant(0.0)
         mu1 = tf.constant(float(self.conf['mu1'])) if self.conf.get('mu1', None) is not None else tf.constant(0.0)
         mu2 = tf.constant(float(self.conf['mu2'])) if self.conf.get('mu2', None) is not None else tf.constant(0.0)
         mu3 = tf.constant(float(self.conf['mu3'])) if self.conf.get('mu3', None) is not None else tf.constant(0.0)
@@ -209,7 +210,7 @@ class DynamicsModel(object):
         self.inverse_loss = tf.reduce_mean(self.inverse_loss_batch)
         self.touch_loss = tf.reduce_mean(self.touch_loss_batch)
         self.reconstruction_loss = tf.add_n(self.img_reconstruction_losses)
-        self.dynamics_loss = self.inverse_loss + mu2 * self.forward_loss + mu3 * self.reconstruction_loss + mu4 * self.feat_norm_loss + mu5 * self.touch_loss
+        self.dynamics_loss = mu0 * self.inverse_loss + mu2 * self.forward_loss + mu3 * self.reconstruction_loss + mu4 * self.feat_norm_loss + mu5 * self.touch_loss
         self.transformer_loss = -self.inverse_loss + mu1 * tf.reduce_mean(self.t_masks)
 
         if self.conf.get("touch"):
@@ -438,9 +439,17 @@ class DynamicsModel(object):
                     net = slim.conv2d(net, self.fsize / 16, [6, 6], 2, padding='VALID', scope='conv3', activation_fn=None)
                     net = tf.reshape(net, [-1, self.fsize])
                 else:
-                    net = slim.conv2d(img, 32, [6, 6], 2, padding='SAME', scope='conv1')
-                    net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
-                    net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
+                    if self.conf["convs"] == "3x3":
+                        net = slim.conv2d(img, 32, [3, 3], 2, padding='SAME', scope='conv1')
+                        net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv2')
+                        net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv3')
+                        net = slim.conv2d(img, 32, [3, 3], 2, padding='SAME', scope='conv1')
+                        net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv2')
+                        net = slim.conv2d(net, 32, [3, 3], 2, padding='SAME', scope='conv3')
+                    else: # default
+                        net = slim.conv2d(img, 32, [6, 6], 2, padding='SAME', scope='conv1')
+                        net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv2')
+                        net = slim.conv2d(net, 32, [6, 6], 2, padding='SAME', scope='conv3')
                     if self.fsize % 16 == 0:
                         net = slim.conv2d(net, self.fsize / 16, [3, 3], 2, padding='SAME', scope='conv4', activation_fn=self.feat_activation)
                         net = tf.reshape(net, [-1, self.fsize])
@@ -602,7 +611,7 @@ def get_default_conf():
     conf['mu2'] = 0 # forward weight
     conf['mu3'] = 1 # autoencoder weight
     conf['mu4'] = 0 # feature 1-norm loss weight
-    conf['mu5'] = 0
+    conf['mu5'] = 0 # haptics weight
     conf['seq'] = 0 # to alternate training phase
     conf['autoencoder'] = "decode" # autoencoder mode, decode means do not pass gradients, None means no autoencoder at all
     conf['forwardloss'] = "gaussian"
@@ -615,6 +624,8 @@ def get_default_conf():
     conf['touchposweight'] = 100
     conf['discretizetouch'] = 20
     conf['ratiotouch'] = None
+    conf['mu0'] = 1
+    conf['convs'] = "6x6"
     return conf
 
 DEFAULT_CONF = get_default_conf()
@@ -696,7 +707,7 @@ def discretize_touch(x):
 def sample_touch_ratio(x, ratio_touch=0.5):
     """Returns so that p/(p + n) = ratio_touch"""
     if ratio_touch is None:
-        R = np.ones((batches, frames))
+        R = np.ones((32, 15))
 
     batches = x.shape[0]
     frames = x.shape[1]
